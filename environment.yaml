@@ -1,0 +1,7 @@
+name: project-blueprint
+
+dependencies:
+  - python=3.10
+  - pip: 
+    - -e .
+    - -r requirements.txt

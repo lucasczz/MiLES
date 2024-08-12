@@ -1,0 +1,241 @@
+% This file was adapted from ICLR2022_conference.tex example provided for the ICLR conference
+\documentclass{article} % For LaTeX2e
+\usepackage{collas2024_conference,times}
+\usepackage{easyReview}
+\usepackage{booktabs}
+
+% Optional math commands from https://github.com/goodfeli/dlbook_notation.
+\input{math_commands.tex}
+
+% Please leave these options as they are
+\usepackage{hyperref}
+\hypersetup{
+    colorlinks=true,
+    linkcolor=red,
+    filecolor=magenta,
+    urlcolor=blue,
+    citecolor=purple,
+    pdftitle={Overleaf Example},
+    pdfpagemode=FullScreen,
+    }
+
+
+
+
+\title{Formatting Instructions for CoLLAs 2024 \\ Conference Submissions}
+
+% Authors must not appear in the submitted version. They should be hidden
+% as long as the \collasfinalcopy macro remains commented out below.
+% Non-anonymous submissions will be rejected without review.
+
+\author{Antiquus S.~Hippocampus, Natalia Cerebro  \thanks{ Use footnote for providing further information
+about author (webpage, alternative address)---\emph{not} for acknowledging
+funding agencies.  Funding acknowledgements go at the end of the paper.} \\
+Department of Computer Science\\
+Random University\\
+Country \\
+\texttt{\{hippo,brain\}@cs.random.edu} \\
+\And % Use And to have authors side by side
+Koala Learnus \& D. Q. ResNet  \\
+Department of Computational Neuroscience \\
+University of Random City \\
+Another Country \\
+\texttt{\{koala,net\}@random.rand} \\
+\AND % Use AND to have authors block one under the other
+Coauthor \\
+Affiliation \\
+Address \\
+\texttt{email}
+}
+
+% The \author macro works with any number of authors. There are two commands
+% used to separate the names and addresses of multiple authors: \And and \AND.
+%
+% Using \And between authors leaves it to \LaTeX{} to determine where to break
+% the lines. Using \AND forces a linebreak at that point. So, if \LaTeX{}
+% puts 3 of 4 authors names on the first line, and the last on the second
+% line, try using \AND instead of \And before the third author name.
+
+\newcommand{\fix}{\marginpar{FIX}}
+\newcommand{\new}{\marginpar{NEW}}
+
+%\collasfinalcopy % Uncomment for camera-ready version, but NOT for submission.
+
+%\preprintcopy % Uncomment for the preprint version, but NOT for submission.
+
+\begin{document}
+
+
+\maketitle
+
+\begin{abstract}
+    Concise and insightful abstract for the paper. Please follow the instructions below for structuring your submission to CoLLAs 2024. This template follows closely the template for ICLR 2022 submissions, with some minor modifications. A conference submission to CoLLAs should aim for 9 pages, with a maximum of 10 and no minimum number of pages required.
+\end{abstract}
+
+
+\section{Problem Definition}
+
+The goal of the recommendation model is to predict which users are the most suitable candidates to fulfill a transportation query, based on their historic GPS trajectory.
+
+In this context, a query represents a request $\vq = (\vy_1, \vy_2, t_1, t_2)$ to transport a parcel from location $\vy_1$ to $\vy_2$ within a timeframe starting with $t_1$ and ending with $t_2$.
+
+Formally, we want to find a function
+
+\begin{equation}
+    f(\vy_1, \vy_2, t_1, t_2; \vtheta) = \hat{\vp} \in [0, 1]^{k}
+\end{equation}
+
+that returns a probability distribution over all $k$ users for a given query.
+
+% The GPS trajectory of a user $u$ is given as a series of visits $\bm{v} = (t, \vx)$, where $\vx$ are the coordinates visited at the given timestamp $t$.
+
+\subsection{Notation}
+
+\begin{table}[h]
+    \centering
+    \begin{tabular}{c c}
+        \toprule
+        Meaning          & Variable                         \\
+        \midrule
+        Set of users     & $\mathbb{U}$                     \\
+        Visit            & $\bm{v} = (t, \vx)$              \\
+        Location history & $X = \{\vx_1, \ldots, \vx_e\}$   \\
+        Query            & $\vq = (\vy_1, \vy_2, t_1, t_2)$ \\
+        \bottomrule
+    \end{tabular}
+    \caption{Notation}
+\end{table}
+
+Let $X_{t_1:t_2}$ be the history of GPS locations of a user between the timestamps $t_1$ and $t_2$.
+
+\subsection{Trajectory prediction}
+
+Estimate the quality of a trajectory prediction based on:
+
+\dots the mean pairwise distances between predicted and actual location in trajectory:
+
+\begin{equation}
+    l = \frac{1}{s} \sum_{i=1}^{s} ||\hat{\vy}_i - \vy_i||
+\end{equation}
+
+\dots the mean pairwise binary cross-entropy between predicted patch and actual patch in trajectory of discretized locations:
+
+\begin{equation}
+    l = \frac{1}{s} \sum_{i=1}^{s} \sum_{j=1}^{n} y_{s,j}\log(\hat{p}_{s,j})+
+    (1-y_{s,j})\log(1-\hat{p}_{s,j})
+\end{equation}
+
+\subsection{Query-User matching}
+
+Estimate the quality of a recommendation based on:
+
+\dots the binary cross-entropy between the predicted probability
+
+\begin{equation}
+    l =
+    \begin{cases}
+        \log(\hat{p}_u),   & \textrm{if} \ \vy_1, \vy_2 \in X_u \\
+        \log(1-\hat{p}_u), & \textrm{else}
+    \end{cases}
+\end{equation}
+
+\dots the shortest expected detour user $u$ must take to fulfill a query $\vq=(\vy_1, \vy_2, t_1, t_2)$:
+
+\begin{align}
+     & l     = \min  \ \frac{\hat{p}_u}{||\vy_{1} - \vy_{2}||}  [||\vy_{1} - \vx_{a}|| + ||\vy_{2} - \vx_{b}|| + ||\vy_{1} - \vy_{2}|| - ||\vx_{a} - \vx_{b}||] \\
+     & s.t.  \ \vx_a \in X_{t_1:}, \vx_b \in X_{t_a:t_2}
+\end{align}
+
+
+\section{Related Work}
+
+\subsection{Trajectory Classification}
+
+\begin{itemize}
+    \item Associates each unlabeled trajectory with a specific category like the user or the mode of transportation that generated it.
+    \item
+\end{itemize}
+
+\subsection{Trajectory Clustering}
+
+\begin{itemize}
+    \item Groups similar trajectories.
+\end{itemize}
+
+\subsection{Trajectory Prediction}
+
+\begin{itemize}
+    \item Predicts the complete trajectory for a given query containing the start of the trajectory.
+\end{itemize}
+
+\subsection{Location Recommendation}
+
+\begin{itemize}
+    \item Recommends locations for a user to visit based on the ones visited by users with similar trajectories.
+\end{itemize}
+
+\subsection{Taxi Sharing}
+
+\begin{itemize}
+    \item Dispatches taxis or other shareable resources to efficiently service orders.
+\end{itemize}
+
+\section{Approach}
+
+\begin{enumerate}
+    \item Cluster historic trajectories for different timeframes like in \citet{yaoTrajectoryClusteringDeep2017a} $\rightarrow$ calculate prototype for each cluster with sufficient number of members $\rightarrow$ use prototypes as predictions.
+    \item Train generative time-series model with trajectories $\rightarrow$ predict trajectory.
+    \item Train one-class classification model on starts and destinations on sampled along historic trajectories $\rightarrow$ use model to estimate similarity between start- and end-point of query and previous start and endpoints.
+\end{enumerate}
+
+\subsection{Temporal Feature Embedding}
+
+\begin{itemize}
+    \item One-hot encode weekend
+    \item One-hot encode 00:00-06:00, 06:00-12:00, 12-18, 18-24
+\end{itemize}
+
+\subsection{Spatial Feature Embedding}
+
+\begin{itemize}
+    \item Discretize trajectory into grid $\rightarrow$ one-hot encode longitude and latitude
+    \item Use fourier-features
+    \item Calculate spatial statistics (mean, max, min, quantiles)over a rolling window (see \cite{yaoTrajectoryClusteringDeep2017a}):
+          \begin{itemize}
+              \item Acceleration
+              \item Change in direction
+              \item Change of position
+          \end{itemize}
+\end{itemize}
+
+
+\subsection{Cross-User Correlations}
+
+\begin{itemize}
+    \item Personalized federated learning
+    \item Learnable user embeddings used for conditioning output
+\end{itemize}
+
+\subsection{Architecture}
+
+\begin{itemize}
+    \item Sequence to Sequence
+    \begin{itemize}
+        \item LSTM Variational Autoencoder
+        \item CNN + Flow Matching?
+    \end{itemize}
+    \item Autoregressive
+    \begin{itemize}
+        \item GPT (Add user and time embeddings to each input token?)
+    \end{itemize}
+\end{itemize}
+
+
+\bibliography{collas2024_conference}
+\bibliographystyle{collas2024_conference}
+
+\appendix
+\section{Appendix}
+You may include other additional sections here.
+
+\end{document}
