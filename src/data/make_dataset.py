@@ -1,23 +1,14 @@
 import numpy as np
-import folium
 import pandas as pd
 import glob
 import os.path
-from shapely import Polygon
 from tqdm import tqdm
 import os
 import geopandas as gpd
-import matplotlib.pyplot as plt
 
 from src.data.hex_utils import (
-    axial_to_oddq,
-    cell_distance,
-    cell_round,
     hexagonize,
     interpolate_cell_jumps,
-    interpolate_cells,
-    coords_to_hex,
-    get_hex_size,
 )
 
 crs = "epsg:3857"
@@ -85,10 +76,6 @@ def fix_datetime(df):
     return df
 
 
-def l2_dist(a, b):
-    return np.linalg.norm(a - b, axis=-1)
-
-
 def prep_geolife(limits, crs="epsg:2333"):
     gdf = read_all_users("data/raw/Geolife Trajectories 1.3/Data")
     gdf = gpd.GeoDataFrame(
@@ -118,7 +105,7 @@ def prep_geolife(limits, crs="epsg:2333"):
     gdf = gdf[gdf["timediff"] > 0]
 
     # Get distance between records
-    print("Calculating")
+    print("Calculating distances...")
     tmp = []
     for t_idx, tdf in gdf.groupby("t_idx"):
         xy = tdf[["x", "y"]]
@@ -138,10 +125,6 @@ def prep_geolife(limits, crs="epsg:2333"):
     return gdf
 
 
-
-
-
-
 if __name__ == "__main__":
 
     crs = "epsg:2333"
@@ -151,9 +134,37 @@ if __name__ == "__main__":
 
     limits = gpd.points_from_xy(x=lonlimits, y=latlimits, crs="epsg:4326")
     limits = limits.to_crs(crs)
+
     gdf = prep_geolife(limits, crs)
     gdf.to_pickle("data/processed/geolife.pkl")
 
     hdf = hexagonize(gdf, n_rows=n_rows, limits=limits)
-    hdf = interpolate_cell_jumps()
+    tmp = []
+    for t_idx, dft in hdf.groupby("t_idx"):
+        tmp.append(interpolate_cell_jumps(dft))
+    hdf = pd.concat(tmp)
+    hdf = hdf.groupby("t_idx").filter(lambda x: len(x) >= 3)
+
+    hdf["is_workday"] = hdf["datetime"].apply(lambda x: x.weekday() < 5)
+    hour_thresholds = range(0, 25, 6)
+
+    for idx in range(len(hour_thresholds) - 1):
+        hdf[f"is_in_time_{idx}"] = hdf["datetime"].apply(
+            lambda x: hour_thresholds[idx] < x.hour <= hour_thresholds[idx + 1]
+        )
+
+    tmp = []
+    q_max = hdf["q"].max()
+    r_max = hdf["r"].max()
+    for t_idx, dfi in hdf.groupby("t_idx"):
+        dfnew = pd.concat([dfi.head(1), dfi, dfi.tail(1)])
+        q_idx = dfnew.columns.get_loc("q")
+        r_idx = dfnew.columns.get_loc("r")
+        dfnew.iloc[0, q_idx] = q_max + 1
+        dfnew.iloc[-1, q_idx] = q_max + 2
+        dfnew.iloc[0, r_idx] = r_max + 1
+        dfnew.iloc[-1, r_idx] = r_max + 2
+        tmp.append(dfnew)
+    hdf = pd.concat(tmp)
+
     hdf.to_pickle(f"data/processed/geolife_hex_{n_rows}.pkl")

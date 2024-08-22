@@ -16,6 +16,7 @@ geopy = "*"
 geopandas = "*"
 trajectory-forecasting = {file = "."}
 lightning = "*"
+wandb = "*"
 
 [dev-packages]
 

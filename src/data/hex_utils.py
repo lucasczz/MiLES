@@ -1,8 +1,10 @@
 import numpy as np
 import geopandas as gpd
+from geopandas.array import GeometryArray
 import pandas as pd
 from shapely import Polygon
 import folium
+import torch
 
 KEYS = {"axial": ["q", "r"], "oddq": ["col", "row"]}
 STYLE_GRID = {"fillOpacity": "0.0", "weight": 1}
@@ -14,13 +16,14 @@ STYLE_VISITED = {
 }
 
 
-def hexagonize(df, n_rows, limits):
+def hexagonize(df, n_rows, limits: GeometryArray):
     lonlat_offset = np.array([limits[0].x, limits[0].y])
     hex_size = get_hex_size(limits=limits, n_rows=n_rows)
 
     xy = df[["x", "y"]].values
     qr = coords_to_hex(xy, hex_size, lonlat_offset)
     hdf = pd.DataFrame(qr, columns=["q", "r"])
+    hdf["r"] = hdf["r"] - hdf["r"].min()
     hdf["datetime"] = df["datetime"]
     hdf["t_idx"] = df["t_idx"]
     hdf["user"] = df["user"]
@@ -57,6 +60,13 @@ def cell_distance(cell1, cell2):
     if cell1.shape[-1] != 3:
         diff += np.abs(cell1.sum(-1) - cell2.sum(-1))
     return diff / 2
+
+
+def cell_distance_loss(q1, r1, q2, r2):
+    q_diff = q2 - q1
+    r_diff = r2 - r1
+    loss = torch.abs(q_diff) + torch.abs(r_diff) + torch.abs(q_diff + r_diff)
+    return loss / 2
 
 
 def cell_round(frac):
