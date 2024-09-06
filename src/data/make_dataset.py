@@ -11,7 +11,17 @@ from src.data.hex_utils import (
     interpolate_cell_jumps,
 )
 
-crs = "epsg:3857"
+
+ACTIONS = {
+    (0, 0): 0,
+    (1, 1): 1,
+    (0, 1): 2,
+    (0, -1): 3,
+    (1, 0): 4,
+    (-1, 0): 5,
+    (1, -1): 6,
+    (-1, 1): 7,
+}
 
 
 def read_plt(plt_file, index):
@@ -168,3 +178,18 @@ if __name__ == "__main__":
     hdf = pd.concat(tmp)
 
     hdf.to_pickle(f"data/processed/geolife_hex_{n_rows}.pkl")
+
+    tmp = []
+    for t_idx, tdf in hdf.groupby("t_idx"):
+        tdf_shift = tdf.shift(-1)
+        tdf["delta_q"] = tdf_shift["q"] - tdf["q"]
+        tdf["delta_r"] = tdf_shift["r"] - tdf["r"]
+        tmp.append(tdf)
+    ndf = pd.concat(tmp)
+    ndf["move"] = ndf.apply(
+        lambda row: ACTIONS.get((row["delta_q"], row["delta_r"]), 1), axis=1
+    )
+    ndf.loc[ndf["q"] == 61, "move"] = 0
+    ndf = ndf[ndf["q"] != 62]
+
+    ndf.to_pickle("../data/processed/geolife_hex_50_moves.pkl")

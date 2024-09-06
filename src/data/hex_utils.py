@@ -62,11 +62,11 @@ def cell_distance(cell1, cell2):
     return diff / 2
 
 
-def cell_distance_loss(q1, r1, q2, r2):
-    q_diff = q2 - q1
-    r_diff = r2 - r1
+def cell_distance_loss(p_input, q_input, r_input, q_target, r_target):
+    q_diff = q_target - q_input
+    r_diff = r_target - r_input
     loss = torch.abs(q_diff) + torch.abs(r_diff) + torch.abs(q_diff + r_diff)
-    return loss / 2
+    return loss / 2 @ p_input
 
 
 def cell_round(frac):

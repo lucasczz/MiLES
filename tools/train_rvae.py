@@ -5,8 +5,9 @@ from lightning.pytorch import Trainer, seed_everything
 from lightning.pytorch.loggers.wandb import WandbLogger
 
 import wandb
-from src.data.loader import GeolifeModule
-from src.models.rvae import GRUVariationalAutoencoder
+from src.data.loader import GeolifeModule, GeolifeMovesModule
+from src.models.gru import GRUClassifier
+from src.models.rvae import GRUVariationalAutoencoder, MoveAutoencoder
 from utils import MODELS
 from utils import load_config_from_file
 
@@ -43,13 +44,13 @@ def run(config):
         n_workers=config.n_workers,
     )
     data_info = data.get_info()
-    model = GRUVariationalAutoencoder(
+    model = GRUClassifier(
         optim_fn="AdamW",
         weight_decay=1e-5,
-        time_embedding_dim=data_info["n_timeslots"],
         n_cols=data_info["n_cols"],
         n_rows=data_info["n_rows"],
         n_users=data_info["n_users"],
+        user_weight=data_info["user_weight"],
         **config.model_kwargs,
     )
     trainer.fit(model, datamodule=data)
