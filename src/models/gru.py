@@ -1,14 +1,11 @@
 from typing import List
-from sklearn.manifold import TSNE
 from torchmetrics.functional import accuracy
-import numpy as np
-import pandas as pd
+
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from torch.nn.utils.rnn import pack_padded_sequence, pad_packed_sequence, pad_sequence
+from torch.nn.utils.rnn import pack_padded_sequence, pad_sequence
 import lightning as L
-from pathlib import Path
 
 
 class GRUClassifier(L.LightningModule):
@@ -104,8 +101,8 @@ class GRUClassifier(L.LightningModule):
         user_weight = torch.tensor(self.user_weight, device=self.device)
         loss = self.loss_fn(y_pred, y, weight=user_weight)
 
-        acc = accuracy(y_pred, y, task="multiclass", num_classes=self.n_users)
-        self.log("train_accuracy", acc, batch_size=len(q))
+        acc = accuracy(y_pred, y, task="multiclass", num_classes=self.n_users, average='micro')
+        self.log("train_top1_accuracy", acc, batch_size=len(q))
         self.log("train_loss", loss, batch_size=len(q))
         return loss
 
@@ -116,7 +113,11 @@ class GRUClassifier(L.LightningModule):
         user_weight = torch.tensor(self.user_weight, device=self.device)
         loss = self.loss_fn(y_pred, y, weight=user_weight)
 
-        acc = accuracy(y_pred, y, task="multiclass", num_classes=self.n_users)
-        self.log("val_accuracy", acc, batch_size=len(q))
+        top1_acc = accuracy(y_pred, y, task="multiclass", num_classes=self.n_users)
+        top5_acc = accuracy(
+            y_pred, y, task="multiclass", num_classes=self.n_users, top_k=5
+        )
+        self.log("val_top1_accuracy", top1_acc, batch_size=len(q))
+        self.log("val_top5_accuracy", top5_acc, batch_size=len(q))
         self.log("val_loss", loss, batch_size=len(q))
         return loss

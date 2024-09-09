@@ -12,7 +12,7 @@ config = SimpleNamespace(
         coordinate_embedding_dim=8,
         hidden_size=128,
         lr=1e-3,
-        dropout=0.0,
+        dropout=0.5,
     ),
     save_dir="gru",
     max_epochs=None,

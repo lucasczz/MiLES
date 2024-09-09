@@ -1,6 +1,6 @@
 import importlib
 
-from src.models.rvae import GRUVariationalAutoencoder
+from src.models.vae import GRUVariationalAutoencoder
 
 MODELS = {"VAE": GRUVariationalAutoencoder}
 

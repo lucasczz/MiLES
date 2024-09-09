@@ -5,10 +5,8 @@ from lightning.pytorch import Trainer, seed_everything
 from lightning.pytorch.loggers.wandb import WandbLogger
 
 import wandb
-from src.data.loader import GeolifeModule, GeolifeMovesModule
+from src.data.loader import GeolifeModule 
 from src.models.gru import GRUClassifier
-from src.models.rvae import GRUVariationalAutoencoder, MoveAutoencoder
-from utils import MODELS
 from utils import load_config_from_file
 
 
