@@ -1,16 +1,21 @@
+import pickle
 import numpy as np
 import pandas as pd
 import glob
 import os.path
+from pyproj import Transformer
 from tqdm import tqdm
 import os
+from pathlib import Path
 import geopandas as gpd
 
 from src.data.hex_utils import (
     hexagonize,
     interpolate_cell_jumps,
+    small_to_big,
 )
 
+BASEPATH = Path(__file__).parent.parent.parent
 
 ACTIONS = {
     (0, 0): 0,
@@ -87,7 +92,9 @@ def fix_datetime(df):
 
 
 def prep_geolife(limits, crs="epsg:2333"):
-    gdf = read_all_users("data/raw/Geolife Trajectories 1.3/Data")
+    gdf = read_all_users(
+        BASEPATH.joinpath("data", "raw", "Geolife Trajectories 1.3", "Data")
+    )
     gdf = gpd.GeoDataFrame(
         gdf, geometry=gpd.points_from_xy(gdf.lon, gdf.lat, crs="epsg:4326")
     )
@@ -137,24 +144,40 @@ def prep_geolife(limits, crs="epsg:2333"):
 
 if __name__ == "__main__":
 
-    crs = "epsg:2333"
-    lonlimits = [116.1, 116.7]
-    latlimits = [39.7, 40.1]
-    n_rows = 50
+    crs1 = "epsg:4326"
+    crs2 = "epsg:3857"
+    limits = np.array([[116.1, 39.7], [116.7, 40.1]])
+    n_rows = 100
 
-    limits = gpd.points_from_xy(x=lonlimits, y=latlimits, crs="epsg:4326")
-    limits = limits.to_crs(crs)
+    transformer = Transformer.from_crs(crs1, crs2)
 
-    gdf = prep_geolife(limits, crs)
-    gdf.to_pickle("data/processed/geolife.pkl")
+    gdf_path = BASEPATH.joinpath("data", "processed", "geolife.pkl")
+    if not gdf_path.is_file:
+        gdf = prep_geolife(limits, crs2)
+        gdf.to_pickle(BASEPATH.joinpath("data", "processed", "geolife.pkl"))
+    else:
+        with open(gdf_path, "rb") as f:
+            gdf = pickle.load(f)
 
+    print("Hexagonizing trajectories...")
     hdf = hexagonize(gdf, n_rows=n_rows, limits=limits)
-    tmp = []
-    for t_idx, dft in hdf.groupby("t_idx"):
-        tmp.append(interpolate_cell_jumps(dft))
-    hdf = pd.concat(tmp)
-    hdf = hdf.groupby("t_idx").filter(lambda x: len(x) >= 3)
+    hdf["cell0"] = hdf.groupby(["q", "r"]).ngroup() + 1
+    # tmp = []
+    # for t_idx, dft in tqdm(list(hdf.groupby("t_idx")), desc="Connecting cell jumps..."):
+    #     tmp.append(interpolate_cell_jumps(dft))
+    # hdf = pd.concat(tmp)
+    # hdf = hdf.groupby("t_idx").filter(lambda x: len(x) >= 3)
 
+    hdf = hdf.rename(columns={"q": "q0", "r": "r0"})
+    for level in tqdm(list(range(1, 4)), desc="Computing high-level cells..."):
+        q_new, r_new = small_to_big(
+            qr=hdf[[f"q{level-1}", f"r{level-1}"]].values, radius=1
+        ).T
+        hdf[f"q{level}"] = q_new
+        hdf[f"r{level}"] = r_new
+        hdf[f"cell{level}"] = hdf.groupby([f"q{level}", f"r{level}"]).ngroup() + 1
+
+    print("Assigning time labels...")
     hdf["is_workday"] = hdf["datetime"].apply(lambda x: x.weekday() < 5)
     hour_thresholds = range(0, 25, 6)
 
@@ -163,33 +186,8 @@ if __name__ == "__main__":
             lambda x: hour_thresholds[idx] < x.hour <= hour_thresholds[idx + 1]
         )
 
-    tmp = []
-    q_max = hdf["q"].max()
-    r_max = hdf["r"].max()
-    for t_idx, dfi in hdf.groupby("t_idx"):
-        dfnew = pd.concat([dfi.head(1), dfi, dfi.tail(1)])
-        q_idx = dfnew.columns.get_loc("q")
-        r_idx = dfnew.columns.get_loc("r")
-        dfnew.iloc[0, q_idx] = q_max + 1
-        dfnew.iloc[-1, q_idx] = q_max + 2
-        dfnew.iloc[0, r_idx] = r_max + 1
-        dfnew.iloc[-1, r_idx] = r_max + 2
-        tmp.append(dfnew)
-    hdf = pd.concat(tmp)
+    time_features = [f"is_in_time_{idx}" for idx in range(4)] + ["is_workday"]
+    hdf["time_label"] = hdf[time_features].astype(int).values @ np.arange(5)
 
-    hdf.to_pickle(f"data/processed/geolife_hex_{n_rows}.pkl")
-
-    tmp = []
-    for t_idx, tdf in hdf.groupby("t_idx"):
-        tdf_shift = tdf.shift(-1)
-        tdf["delta_q"] = tdf_shift["q"] - tdf["q"]
-        tdf["delta_r"] = tdf_shift["r"] - tdf["r"]
-        tmp.append(tdf)
-    ndf = pd.concat(tmp)
-    ndf["move"] = ndf.apply(
-        lambda row: ACTIONS.get((row["delta_q"], row["delta_r"]), 1), axis=1
-    )
-    ndf.loc[ndf["q"] == 61, "move"] = 0
-    ndf = ndf[ndf["q"] != 62]
-
-    ndf.to_pickle("../data/processed/geolife_hex_50_moves.pkl")
+    print("Saving data...")
+    hdf.to_pickle(BASEPATH.joinpath("data", "processed", f"geolife_hex_{n_rows}.pkl"))

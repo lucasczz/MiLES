@@ -8,18 +8,32 @@ from torch.nn.utils.rnn import pack_padded_sequence, pad_sequence
 import lightning as L
 
 
+class MultilevelEmbedding(nn.Module):
+    def __init__(self, num_embeddings, embedding_dim, init="default") -> None:
+        super().__init__()
+        self.num_embeddings = num_embeddings
+        self.embedding_dim = embedding_dim
+        self.init = init
+        # TODO: add option to initialize lower levels to zero
+        self.levels = nn.ModuleList(
+            [nn.Embedding(n, embedding_dim) for n in num_embeddings]
+        )
+
+    def forward(self, x):
+        return sum([level(x[..., idx]) for idx, level in enumerate(self.levels)])
+
+
 class GRUClassifier(L.LightningModule):
     def __init__(
         self,
-        n_rows: int,
-        n_cols: int,
-        n_users: int = 181,
-        coordinate_embedding_dim: int = 8,
+        n_cells: List[int],
+        n_users: int,
+        n_time_intervals: int,
+        cell_embedding_dim: int = 16,
+        time_embedding_dim: int = 16,
         hidden_size: int = 256,
-        latent_dim: int = 128,
         n_layers: int = 3,
         lr: float = 0.001,
-        beta: float = 1.0,
         weight_decay: float = 0.0001,
         loss_fn: str = "cross_entropy",
         optim_fn: str = "AdamW",
@@ -28,28 +42,28 @@ class GRUClassifier(L.LightningModule):
         user_weight: List = None,
     ):
         super().__init__()
-        self.n_rows = n_rows
-        self.n_cols = n_cols
+        self.n_cells = n_cells
         self.n_users = n_users
         self.hidden_size = hidden_size
-        self.latent_dim = latent_dim
         self.n_layers = n_layers
         self.lr = lr
-        self.beta = beta
         self.weight_decay = weight_decay
         self.loss_fn = getattr(F, loss_fn)
         self.optim_fn = getattr(torch.optim, optim_fn)
         self.dropout = dropout
         self.user_weight = user_weight if user_weight else [1 / n_users] * n_users
+        self.n_time_intervals = n_time_intervals
 
         # Model parameters
         self.save_hyperparameters()
 
         # Embeddings
-        self.col_embedding = nn.Embedding(n_cols, coordinate_embedding_dim)
-        self.row_embedding = nn.Embedding(n_rows, coordinate_embedding_dim)
+        self.cell_embedding = MultilevelEmbedding(n_cells, cell_embedding_dim)
+
+        self.time_embedding = nn.Embedding(n_time_intervals, time_embedding_dim)
+
         # Encoder
-        self.fc_enc = nn.Linear(2 * coordinate_embedding_dim, hidden_size)
+        self.fc_enc = nn.Linear(cell_embedding_dim + time_embedding_dim, hidden_size)
         self.encoder = nn.GRU(
             input_size=hidden_size,
             hidden_size=hidden_size,
@@ -58,7 +72,7 @@ class GRUClassifier(L.LightningModule):
             bidirectional=bidirectional,
             dropout=dropout,
         )
-        self.fc_clf = nn.Linear(latent_dim, self.n_users)
+        self.fc_clf = nn.Linear(hidden_size, self.n_users)
 
         # Optimizer and loss function
         self.loss_fn = getattr(F, loss_fn)
@@ -66,23 +80,23 @@ class GRUClassifier(L.LightningModule):
 
     def forward(
         self,
-        q: torch.Tensor,
-        r: torch.Tensor,
+        x: torch.Tensor,
+        t: torch.Tensor,
     ):
         # Embedding lookups
-        traj_lens = torch.tensor([len(qi) for qi in q])
-        q_pad = pad_sequence(q, batch_first=True)
-        r_pad = pad_sequence(r, batch_first=True)
-        q_embed = self.col_embedding(q_pad)
-        r_embed = self.row_embedding(r_pad)
-        traj = torch.cat([q_embed, r_embed], dim=-1)
+        traj_lens = torch.tensor([len(xi) for xi in x])
+        x_pad = pad_sequence(x, batch_first=True)
+        t_pad = pad_sequence(t, batch_first=True)
+        t_embed = self.time_embedding(t_pad)
+        x_embed = self.cell_embedding(x_pad)
+        traj_embed = torch.cat([x_embed, t_embed], dim=-1)
 
         # Encode trajectory
-        traj_enc = self.fc_enc(traj)
-        traj_packed = pack_padded_sequence(
+        traj_enc = self.fc_enc(traj_embed)
+        x_packed = pack_padded_sequence(
             traj_enc, traj_lens, batch_first=True, enforce_sorted=False
         )
-        _, h_enc = self.encoder(traj_packed)
+        _, h_enc = self.encoder(x_packed)
 
         y_pred = self.fc_clf(h_enc[-1])
 
@@ -95,20 +109,22 @@ class GRUClassifier(L.LightningModule):
         return [optim], []
 
     def training_step(self, batch, batch_idx=0):
-        q, r, y = batch
-        y_pred = self(q, r)
+        x, y, t = batch
+        y_pred = self(x, t)
 
         user_weight = torch.tensor(self.user_weight, device=self.device)
         loss = self.loss_fn(y_pred, y, weight=user_weight)
 
-        acc = accuracy(y_pred, y, task="multiclass", num_classes=self.n_users, average='micro')
-        self.log("train_top1_accuracy", acc, batch_size=len(q))
-        self.log("train_loss", loss, batch_size=len(q))
+        acc = accuracy(
+            y_pred, y, task="multiclass", num_classes=self.n_users, average="micro"
+        )
+        self.log("train_top1_accuracy", acc, batch_size=len(x))
+        self.log("train_loss", loss, batch_size=len(x))
         return loss
 
     def validation_step(self, batch, batch_idx=0):
-        q, r, y = batch
-        y_pred = self(q, r)
+        x, y, t = batch
+        y_pred = self(x, t)
 
         user_weight = torch.tensor(self.user_weight, device=self.device)
         loss = self.loss_fn(y_pred, y, weight=user_weight)
@@ -117,7 +133,7 @@ class GRUClassifier(L.LightningModule):
         top5_acc = accuracy(
             y_pred, y, task="multiclass", num_classes=self.n_users, top_k=5
         )
-        self.log("val_top1_accuracy", top1_acc, batch_size=len(q))
-        self.log("val_top5_accuracy", top5_acc, batch_size=len(q))
-        self.log("val_loss", loss, batch_size=len(q))
+        self.log("val_top1_accuracy", top1_acc, batch_size=len(x))
+        self.log("val_top5_accuracy", top5_acc, batch_size=len(x))
+        self.log("val_loss", loss, batch_size=len(x))
         return loss

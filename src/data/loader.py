@@ -10,19 +10,21 @@ DATAPATH = pathlib.Path(__file__).parent.parent.parent.joinpath("data", "process
 
 class GeolifeModule(L.LightningDataModule):
     def collate_fn(batch):
-        q, r, y = zip(*batch)
-        return q, r, torch.tensor(y)
+        x, y, t = zip(*batch)
+        return x, torch.tensor(y), t
 
     def __init__(
         self,
-        batch_size=128,
+        n_hex_rows=100,
+        n_hex_levels=3,
+        min_trajectories=20,
         val_split=0.1,
         test_split=0.2,
-        n_hex_rows=50,
+        batch_size=128,
         n_workers=4,
-        min_trajectories=20,
     ):
         super().__init__()
+        self.n_hex_levels = n_hex_levels
         self.val_split = val_split
         self.test_split = test_split
         self.batch_size = batch_size
@@ -30,7 +32,7 @@ class GeolifeModule(L.LightningDataModule):
         self.n_users = None
         self.min_trajectories = min_trajectories
         self.user_weight = []
-
+        self.cell_keys = [f"cell{i}" for i in range(n_hex_levels)]
         self.trajectories = {}
         with open(DATAPATH.joinpath(f"geolife_hex_{n_hex_rows}.pkl"), "rb") as f:
             self.df = pickle.load(f)
@@ -66,20 +68,18 @@ class GeolifeModule(L.LightningDataModule):
         for stage in stages:
             data_stage = pd.concat(results[stage])
             trajs = data_stage.groupby("t_idx")
-            q = [torch.tensor(traj["q"].values) for _, traj in trajs]
-            r = [torch.tensor(traj["r"].values) for _, traj in trajs]
+            x = [torch.tensor(traj[self.cell_keys].values) for _, traj in trajs]
             y = torch.tensor([traj.iloc[0]["user"] for _, traj in trajs])
-            self.trajectories[stage] = list(zip(q, r, y))
+            t = [torch.tensor(traj["time_label"].values) for _, traj in trajs]
+            self.trajectories[stage] = list(zip(x, y, t))
 
     def get_info(self):
         return {
             "n_users": self.n_users,
-            "n_cols": self.df["q"].max().item() + 1,
-            "n_rows": self.df["r"].max().item() + 1,
-            "n_timeslots": sum(col.startswith("is_in_") for col in self.df.columns) + 1,
+            "n_cells": list(self.df[self.cell_keys].nunique()),
+            "n_time_intervals": self.df["time_label"].nunique(),
             "user_weight": self.user_weight,
         }
-
 
     def train_dataloader(self):
         return data.DataLoader(

@@ -1,7 +1,9 @@
+from matplotlib import patches
 import numpy as np
 import geopandas as gpd
 from geopandas.array import GeometryArray
 import pandas as pd
+from pyproj import Transformer
 from shapely import Polygon
 import folium
 import torch
@@ -16,17 +18,18 @@ STYLE_VISITED = {
 }
 
 
-def hexagonize(df, n_rows, limits: GeometryArray):
-    lonlat_offset = np.array([limits[0].x, limits[0].y])
+def get_hex_size(limits, n_rows):
+    return (limits[1, 1] - limits[0, 1]) / ((n_rows + 0.5) * np.sqrt(3))
+
+
+def hexagonize(df, n_rows, limits):
     hex_size = get_hex_size(limits=limits, n_rows=n_rows)
 
-    xy = df[["x", "y"]].values
-    qr = coords_to_hex(xy, hex_size, lonlat_offset)
-    hdf = pd.DataFrame(qr, columns=["q", "r"])
-    hdf["r"] = hdf["r"] - hdf["r"].min()
-    hdf["datetime"] = df["datetime"]
-    hdf["t_idx"] = df["t_idx"]
-    hdf["user"] = df["user"]
+    xy = df[["lon", "lat"]].values
+    hdf = df.copy()
+    qr = coords_to_hex(xy, hex_size, limits[0])
+    hdf["q"] = qr[:, 0]
+    hdf["r"] = qr[:, 1]
     return hdf
 
 
@@ -67,6 +70,16 @@ def cell_distance_loss(p_input, q_input, r_input, q_target, r_target):
     r_diff = r_target - r_input
     loss = torch.abs(q_diff) + torch.abs(r_diff) + torch.abs(q_diff + r_diff)
     return loss / 2 @ p_input
+
+
+def small_to_big(qr, radius):
+    qrs = np.concatenate([qr, -qr.sum(axis=-1)[..., None]], axis=-1)
+    area = 3 * radius**2 + 3 * radius + 1
+    shift = 3 * radius + 2
+
+    temp_qrs = (np.roll(qrs, -1, axis=-1) + shift * qrs) // area
+    qrs_big = (1 + temp_qrs - np.roll(temp_qrs, -1, axis=-1)) // 3
+    return qrs_big[:, :-1]
 
 
 def cell_round(frac):
@@ -126,20 +139,45 @@ def interpolate_cell_jumps(df):
         new_rows = pd.DataFrame(cell_round(np.concatenate(qri)), columns=["q", "r"])
         new_rows["datetime"] = np.concatenate(ti)
         new_rows["t_idx"] = df.iloc[0]["t_idx"]
+        new_rows["user"] = df.iloc[0]["user"]
         df = df[df["cell_dist"] >= 1]
         return pd.concat([df, new_rows]).sort_values("datetime")
 
 
-def get_hex_size(limits, n_rows):
-    return (limits[1].y - limits[0].y) / ((n_rows + 0.5) * np.sqrt(3))
+def get_hex_traj(traj, n_rows, limits):
+    size = get_hex_size(limits, n_rows)
+    xys = hex_to_coords(traj, size, limits[0])
+    hexagons = [
+        patches.RegularPolygon(
+            xy,
+            numVertices=6,
+            radius=size,
+            orientation=np.radians(30),
+            edgecolor="k",
+            facecolor=(0.1, 0.2, 0.8, 0.5),
+            linewidth=0.5,
+        )
+        for xy in xys
+    ]
+
+    return hexagons
 
 
-def make_hexgrid(limits, size):
+def get_hexgrid(
+    limits,
+    patch=None,
+    n_rows=None,
+    size=None,
+):
+    if size is None:
+        size = get_hex_size(limits, n_rows)
     xstep = 3 / 2 * size
     ystep = np.sqrt(3) * size
 
-    x = np.arange(limits[0].x, limits[1].x - xstep, xstep)  # (n_cols)
-    y = np.arange(limits[0].y, limits[1].y - ystep, ystep)  # (n_rows)
+    step = np.array([xstep, ystep])
+    offset = (patch[0] - limits[0]) // step * step
+    x = np.arange(limits[0, 0] + offset[0], patch[1, 0], xstep)  # (n_cols)
+    y = np.arange(limits[0, 1] + offset[1], patch[1, 1], ystep)  # (n_rows)
 
     n_cols, n_rows = len(x), len(y)
     xs, ys = np.meshgrid(x, y)  # (n_rows, n_cols), (n_rows, n_cols)
@@ -148,24 +186,20 @@ def make_hexgrid(limits, size):
     xy[:, odd_cols, 1] += ystep / 2
     xy = xy.reshape(-1, 2)
 
-    oddq = np.array(
-        [[col, row] for row in range(n_rows) for col in range(n_cols)]
-    )  # (n_cols * n_rows, 2)
+    hexagons = [
+        patches.RegularPolygon(
+            xyi,
+            numVertices=6,
+            radius=size,
+            orientation=np.radians(30),
+            edgecolor="k",
+            facecolor="none",
+            linewidth=0.5,
+        )
+        for xyi in xy
+    ]
 
-    axial = oddq_to_axial(oddq)
-    all_coords = np.concatenate([axial, oddq], axis=-1)
-
-    stepsize = np.array([0.5, 0.5 * np.sqrt(3)]) * size  # (2)
-    steps = np.array([[0, 1], [1, 2], [3, 2], [4, 1], [3, 0], [1, 0]])  # (6, 2)
-    hexes = xy[..., None, :] + (steps * stepsize)
-    polys = [Polygon(hex) for hex in hexes]
-
-    return gpd.GeoDataFrame(
-        data=all_coords,
-        columns=["q", "r", "col", "row"],
-        geometry=polys,
-        crs=limits.crs,
-    )
+    return hexagons
 
 
 def oddq_to_axial(oddq):

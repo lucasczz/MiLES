@@ -17,6 +17,7 @@ geopandas = "*"
 trajectory-forecasting = {file = "."}
 lightning = "*"
 wandb = "*"
+contextily = "*"
 
 [dev-packages]
 
