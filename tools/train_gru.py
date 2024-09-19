@@ -29,7 +29,7 @@ def run(config):
         logger=logger,
         max_epochs=config.max_epochs,
         devices=config.gpus,
-        accelerator="cpu",
+        accelerator="gpu",
         inference_mode=True,
         callbacks=[checkpoint, early_stop],
         gradient_clip_val=0.5,

@@ -17,8 +17,8 @@ class GeolifeModule(L.LightningDataModule):
         self,
         n_hex_rows=100,
         n_hex_levels=3,
-        min_trajectories=20,
-        val_split=0.1,
+        n_users=90,
+        val_split=0.2,
         test_split=0.2,
         batch_size=128,
         n_workers=4,
@@ -29,25 +29,28 @@ class GeolifeModule(L.LightningDataModule):
         self.test_split = test_split
         self.batch_size = batch_size
         self.n_workers = n_workers
-        self.n_users = None
-        self.min_trajectories = min_trajectories
+        self.n_users = n_users
         self.user_weight = []
         self.cell_keys = [f"cell{i}" for i in range(n_hex_levels)]
         self.trajectories = {}
         with open(DATAPATH.joinpath(f"geolife_hex_{n_hex_rows}.pkl"), "rb") as f:
             self.df = pickle.load(f)
 
+        users = self.df.groupby("user")["t_idx"].nunique().nlargest(n_users).index
+        self.df = self.df[self.df["user"].isin(users)]
+
+    def setup(self, stage: str) -> None:
         stages = ["train", "val", "test"]
         results = {stage: [] for stage in stages}
 
         for _, df_user in self.df.groupby("user"):
             trajectory_ids = df_user["t_idx"].unique()
+
             n_trajectories = len(trajectory_ids)
-            if n_trajectories < self.min_trajectories:
-                continue
-            n_val = int(self.val_split * self.min_trajectories)
-            n_test = int(self.test_split * self.min_trajectories)
+            n_val = int(self.val_split * n_trajectories)
+            n_test = int(self.test_split * n_trajectories)
             n_train = n_trajectories - n_val - n_test
+
             df_user["user"] = len(results["train"])
             self.user_weight.append(n_train / self.df["t_idx"].nunique())
 

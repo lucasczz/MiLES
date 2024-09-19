@@ -1,3 +1,4 @@
+import datetime
 import pickle
 import numpy as np
 import pandas as pd
@@ -10,6 +11,7 @@ from pathlib import Path
 import geopandas as gpd
 
 from src.data.hex_utils import (
+    cell_distance,
     hexagonize,
     interpolate_cell_jumps,
     small_to_big,
@@ -109,7 +111,17 @@ def prep_geolife(limits, crs="epsg:2333"):
     xy = gdf["geometry"].get_coordinates()
     gdf = gdf.drop(columns=["geometry", "lon", "lat"])
     gdf = pd.concat([gdf, xy], axis=1)
-    gdf = gdf.assign(t_idx=gdf.groupby(["user", "trajectory"]).ngroup() + 1)
+    gdf["t_idx"] = gdf.groupby(["user", "trajectory"]).ngroup()
+
+    # Split trajectories that span more than 3 hours
+    tmp = []
+    for t_idx, tdf in gdf.groupby("t_idx"):
+        traj_start = tdf["datetime"].iloc[0]
+        tdf["sub_traj"] = (tdf["datetime"] - traj_start) // datetime.timedelta(hours=3)
+        tmp.append(tdf)
+    tdf = pd.concat(tmp)
+    tdf = tdf.sort_values(by=["user", "datetime"])
+    tdf["t_idx"] = tdf.groupby(["t_idx", "sub_traj"]).ngroup()
 
     # Get time between records
     print("Computing time differences...")
@@ -161,24 +173,28 @@ if __name__ == "__main__":
 
     print("Hexagonizing trajectories...")
     hdf = hexagonize(gdf, n_rows=n_rows, limits=limits)
-    hdf["cell0"] = hdf.groupby(["q", "r"]).ngroup() + 1
-    # tmp = []
-    # for t_idx, dft in tqdm(list(hdf.groupby("t_idx")), desc="Connecting cell jumps..."):
-    #     tmp.append(interpolate_cell_jumps(dft))
-    # hdf = pd.concat(tmp)
-    # hdf = hdf.groupby("t_idx").filter(lambda x: len(x) >= 3)
+    hdf["cell0"] = hdf.groupby(["q", "r"]).ngroup()
 
     hdf = hdf.rename(columns={"q": "q0", "r": "r0"})
+
+    # Remove consecutive rows with identical cell coordinates 
+    cells = hdf[['q0', 'r0']]
+    hdf['cell_dist'] = cell_distance(cells.values, cells.shift().values)
+    hdf['cell_dist'] = hdf['cell_dist'].fillna(1)
+    hdf = hdf[hdf['cell_dist'] >= 1]
+
     for level in tqdm(list(range(1, 4)), desc="Computing high-level cells..."):
         q_new, r_new = small_to_big(
             qr=hdf[[f"q{level-1}", f"r{level-1}"]].values, radius=1
         ).T
         hdf[f"q{level}"] = q_new
         hdf[f"r{level}"] = r_new
-        hdf[f"cell{level}"] = hdf.groupby([f"q{level}", f"r{level}"]).ngroup() + 1
+        hdf[f"cell{level}"] = hdf.groupby([f"q{level}", f"r{level}"]).ngroup()
 
     print("Assigning time labels...")
-    hdf["is_workday"] = hdf["datetime"].apply(lambda x: x.weekday() < 5)
+    hdf['weekday'] = hdf['datetime'].dt.day_of_week
+    hdf["is_workday"] = (hdf["weekday"] < 5).astype(int)
+    hdf['timestamp'] = (hdf['datetime'] - hdf['datetime'].min()).astype('int64') // 1e9
     hour_thresholds = range(0, 25, 6)
 
     for idx in range(len(hour_thresholds) - 1):

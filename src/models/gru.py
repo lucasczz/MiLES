@@ -20,7 +20,10 @@ class MultilevelEmbedding(nn.Module):
         )
 
     def forward(self, x):
-        return sum([level(x[..., idx]) for idx, level in enumerate(self.levels)])
+        level_embeddings = torch.stack(
+            [level(x[..., idx]) for idx, level in enumerate(self.levels)]
+        )
+        return level_embeddings.sum(dim=0)
 
 
 class GRUClassifier(L.LightningModule):
