@@ -119,9 +119,9 @@ def prep_geolife(limits, crs="epsg:2333"):
         traj_start = tdf["datetime"].iloc[0]
         tdf["sub_traj"] = (tdf["datetime"] - traj_start) // datetime.timedelta(hours=3)
         tmp.append(tdf)
-    tdf = pd.concat(tmp)
-    tdf = tdf.sort_values(by=["user", "datetime"])
-    tdf["t_idx"] = tdf.groupby(["t_idx", "sub_traj"]).ngroup()
+    gdf = pd.concat(tmp)
+    gdf = gdf.sort_values(by=["user", "datetime"])
+    gdf["t_idx"] = gdf.groupby(["t_idx", "sub_traj"]).ngroup()
 
     # Get time between records
     print("Computing time differences...")

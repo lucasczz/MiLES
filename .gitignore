@@ -19,6 +19,9 @@ lightning_logs
 *.pkl
 *.h5
 *.pdf
+*.png
+*.zip
+*.gz
 ./data
 
 ## Intermediate documents:

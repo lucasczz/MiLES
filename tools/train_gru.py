@@ -6,7 +6,7 @@ from lightning.pytorch.loggers.wandb import WandbLogger
 
 import wandb
 from src.data.loader import GeolifeModule
-from src.models.gru import GRUClassifier
+from src.models.tuler import GRUClassifier
 from utils import load_config_from_file
 
 
