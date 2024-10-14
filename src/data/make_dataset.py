@@ -173,15 +173,15 @@ if __name__ == "__main__":
 
     print("Hexagonizing trajectories...")
     hdf = hexagonize(gdf, n_rows=n_rows, limits=limits)
-    hdf["cell0"] = hdf.groupby(["q", "r"]).ngroup()
+    hdf["cell0"] = hdf.groupby(["q", "r"]).ngroup() - 1
 
     hdf = hdf.rename(columns={"q": "q0", "r": "r0"})
 
-    # Remove consecutive rows with identical cell coordinates 
-    cells = hdf[['q0', 'r0']]
-    hdf['cell_dist'] = cell_distance(cells.values, cells.shift().values)
-    hdf['cell_dist'] = hdf['cell_dist'].fillna(1)
-    hdf = hdf[hdf['cell_dist'] >= 1]
+    # Remove consecutive rows with identical cell coordinates
+    cells = hdf[["q0", "r0"]]
+    hdf["cell_dist"] = cell_distance(cells.values, cells.shift().values)
+    hdf["cell_dist"] = hdf["cell_dist"].fillna(1)
+    hdf = hdf[hdf["cell_dist"] >= 1]
 
     for level in tqdm(list(range(1, 4)), desc="Computing high-level cells..."):
         q_new, r_new = small_to_big(
@@ -192,9 +192,9 @@ if __name__ == "__main__":
         hdf[f"cell{level}"] = hdf.groupby([f"q{level}", f"r{level}"]).ngroup()
 
     print("Assigning time labels...")
-    hdf['weekday'] = hdf['datetime'].dt.day_of_week
+    hdf["weekday"] = hdf["datetime"].dt.day_of_week
     hdf["is_workday"] = (hdf["weekday"] < 5).astype(int)
-    hdf['timestamp'] = (hdf['datetime'] - hdf['datetime'].min()).astype('int64') // 1e9
+    hdf["timestamp"] = (hdf["datetime"] - hdf["datetime"].min()).astype("int64") // 1e9
     hour_thresholds = range(0, 25, 6)
 
     for idx in range(len(hour_thresholds) - 1):
