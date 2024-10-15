@@ -18,6 +18,7 @@ trajectory-forecasting = {file = "."}
 lightning = "*"
 wandb = "*"
 contextily = "*"
+pytest = "*"
 
 [dev-packages]
 

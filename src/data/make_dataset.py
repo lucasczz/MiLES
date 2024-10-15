@@ -189,7 +189,7 @@ if __name__ == "__main__":
         ).T
         hdf[f"q{level}"] = q_new
         hdf[f"r{level}"] = r_new
-        hdf[f"cell{level}"] = hdf.groupby([f"q{level}", f"r{level}"]).ngroup()
+        hdf[f"cell{level}"] = hdf.groupby([f"q{level}", f"r{level}"]).ngroup() + 1
 
     print("Assigning time labels...")
     hdf["weekday"] = hdf["datetime"].dt.day_of_week

@@ -33,8 +33,8 @@ class CurrentEncoder(nn.Module):
             batch_first=True,
             dropout=dropout,
         )
-        self.loc_embed = nn.Embedding(n_locs, embedding_dim_loc)
-        self.time_embed = nn.Embedding(n_times, embedding_dim_time)
+        self.loc_embed = nn.Embedding(n_locs+1, embedding_dim_loc, padding_idx=0)
+        self.time_embed = nn.Embedding(n_times+1, embedding_dim_time, padding_idx=0)
         self.dropout = nn.Dropout(dropout)
 
     def forward(self, x, t):
@@ -48,16 +48,13 @@ class CurrentEncoder(nn.Module):
         xt_embed = torch.cat([x_embed, t_embed], dim=-1)
 
         # Encode trajectory
-        xt_enc = self.fc_enc(xt_embed)
         x_packed = pack_padded_sequence(
-            xt_enc, traj_lens, batch_first=True, enforce_sorted=False
+            xt_embed, traj_lens, batch_first=True, enforce_sorted=False
         )
-        out, (h, c) = self.encoder(x_packed)  # out.shape = (batch, seq, 2*n_hidden)
+        out, (h, c) = self.lstm(x_packed)  # out.shape = (batch, seq, 2*n_hidden)
         out_unpacked, lens_unpacked = pad_packed_sequence(out, batch_first=True)
-        idcs = (lens_unpacked - 1).view(1, -1, 1)
-        return out_unpacked.gather(
-            dim=1, index=idcs.expand(-1, 1, out_unpacked.shape[-1])
-        ).squeeze(1)
+
+        return out_unpacked[torch.arange(len(out_unpacked)), lens_unpacked - 1]
         # shape = (batch_size, 2*n_hidden)
 
 
@@ -85,9 +82,9 @@ class HistoryEncoder(nn.Module):
         self.embedding_dim_user = embedding_dim_user
         self.embedding_dim = embedding_dim_time + embedding_dim_loc + embedding_dim_user
 
-        self.loc_embed = nn.Embedding(n_locs, embedding_dim_loc, padding_idx=0)
-        self.time_embed = nn.Embedding(n_times, embedding_dim_time, padding_idx=0)
-        self.user_embed = nn.Embedding(n_users, embedding_dim_user, padding_idx=0)
+        self.loc_embed = nn.Embedding(n_locs+1, embedding_dim_loc, padding_idx=0)
+        self.time_embed = nn.Embedding(n_times+1, embedding_dim_time, padding_idx=0)
+        self.user_embed = nn.Embedding(n_users+1, embedding_dim_user, padding_idx=0)
         self.fc_xtu = nn.Linear(self.embedding_dim, 2 * n_hidden)
         self.dropout = nn.Dropout(dropout)
         self.device = device
@@ -103,7 +100,7 @@ class HistoryEncoder(nn.Module):
             # Step 1: Get unique combinations of location and time IDs
             xti = torch.stack([xi, ti], dim=-1)  # shape = (sum(seq_len), 2)
             xt_unique, inv_idcs, counts = torch.unique(
-                xti, dim=0, return_inverse=True, counts=True
+                xti, dim=0, return_inverse=True, return_counts=True
             )
             all_xt_unique.append(xt_unique)
             all_inv_idcs.append(inv_idcs)
@@ -127,11 +124,11 @@ class HistoryEncoder(nn.Module):
         u_emb_sum = torch.zeros(batch_size, n_unique_max, self.embedding_dim_user)
         # Use scatter_add_ to efficiently add u_embeds to emb_sum
         u_emb_sum = u_emb_sum.scatter_add_(
-            0,
-            inv_idcs_padded.unsqueeze(-1).expand(-1, self.embedding_dim_user),
+            1,
+            inv_idcs_padded.unsqueeze(-1).expand(-1, -1, self.embedding_dim_user),
             ui_embed,
         )
-        u_embed = u_emb_sum / counts_padded[:, None]
+        u_embed = u_emb_sum / counts_padded[..., None]
 
         # Step 4: Combine embeddings
         xtu_embed = torch.cat([x_embed, t_embed, u_embed], dim=-1)
@@ -200,7 +197,7 @@ class DeepTUL(nn.Module):
             n_layers,
             device,
         )
-        self.clf = nn.Linear(2 * n_hidden, n_users)
+        self.clf = nn.Linear(4 * n_hidden, n_users)
 
     def forward(self, xc, tc, xh, th, uh):
         c_enc = self.c_encoder(xc, tc)
@@ -209,5 +206,5 @@ class DeepTUL(nn.Module):
 
         # Return the weighted sum of history with attention applied
         h_context = torch.einsum("it,itj->ij", hc_attn, h_enc)
-        
+
         return self.clf(torch.cat([c_enc, h_context], dim=-1))

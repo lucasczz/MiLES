@@ -7,6 +7,7 @@ import pathlib
 
 DATAPATH = pathlib.Path(__file__).parent.parent.parent.joinpath("data", "processed")
 
+# TODO: add option to add start and end-tokens 
 
 class GeolifeModule(L.LightningDataModule):
     def collate_fn(batch):
