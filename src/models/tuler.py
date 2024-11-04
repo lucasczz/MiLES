@@ -29,10 +29,10 @@ class MultilevelEmbedding(nn.Module):
 class GRUClassifier(L.LightningModule):
     def __init__(
         self,
-        n_cells: List[int],
+        n_locs: List[int],
         n_users: int,
         n_time_intervals: int,
-        cell_embedding_dim: int = 16,
+        loc_embedding_dim: int = 16,
         time_embedding_dim: int = 16,
         hidden_size: int = 256,
         n_layers: int = 3,
@@ -45,7 +45,7 @@ class GRUClassifier(L.LightningModule):
         user_weight: List = None,
     ):
         super().__init__()
-        self.n_cells = n_cells
+        self.n_locs = n_locs
         self.n_users = n_users
         self.hidden_size = hidden_size
         self.n_layers = n_layers
@@ -61,12 +61,12 @@ class GRUClassifier(L.LightningModule):
         self.save_hyperparameters()
 
         # Embeddings
-        self.cell_embedding = MultilevelEmbedding(n_cells, cell_embedding_dim)
+        self.loc_embedding = MultilevelEmbedding(n_locs, loc_embedding_dim)
 
         self.time_embedding = nn.Embedding(n_time_intervals, time_embedding_dim)
 
         # Encoder
-        self.fc_enc = nn.Linear(cell_embedding_dim + time_embedding_dim, hidden_size)
+        self.fc_enc = nn.Linear(loc_embedding_dim + time_embedding_dim, hidden_size)
         self.encoder = nn.GRU(
             input_size=hidden_size,
             hidden_size=hidden_size,
@@ -91,7 +91,7 @@ class GRUClassifier(L.LightningModule):
         x_pad = pad_sequence(x, batch_first=True)
         t_pad = pad_sequence(t, batch_first=True)
         t_embed = self.time_embedding(t_pad)
-        x_embed = self.cell_embedding(x_pad)
+        x_embed = self.loc_embedding(x_pad)
         traj_embed = torch.cat([x_embed, t_embed], dim=-1)
 
         # Encode trajectory

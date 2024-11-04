@@ -1,20 +1,23 @@
+from typing import List
 from torch import nn
 import torch
 import torch.nn.functional as F
-from torch.nn.utils.rnn import pad_packed_sequence, pack_padded_sequence, pad_sequence
+from torch.nn.utils.rnn import pack_padded_sequence, pad_sequence
+from einops import rearrange
 
 
 class CurrentEncoder(nn.Module):
     def __init__(
         self,
-        n_hidden,
-        embedding_dim_loc,
-        embedding_dim_time,
         n_locs,
         n_times,
-        dropout,
-        n_layers,
-        device,
+        n_hidden: int = 64,
+        loc_embedding_dim: int = 64,
+        time_embedding_dim: int = 32,
+        dropout: float = 0.6,
+        n_layers: int = 1,
+        device: torch.device = "cuda:0",
+        bidirectional: bool = True,
     ):
         super().__init__()
         self.device = device
@@ -22,9 +25,10 @@ class CurrentEncoder(nn.Module):
         self.n_locs = n_locs
         self.n_times = n_times
         self.n_layers = n_layers
-        self.embedding_dim_loc = embedding_dim_loc
-        self.embedding_dim_time = embedding_dim_time
-        self.embedding_dim = embedding_dim_time + embedding_dim_loc
+        self.n_dirs = 1 + bidirectional
+        self.loc_embedding_dim = loc_embedding_dim
+        self.time_embedding_dim = time_embedding_dim
+        self.embedding_dim = time_embedding_dim + loc_embedding_dim
 
         self.lstm = nn.LSTM(
             self.embedding_dim,
@@ -33,11 +37,11 @@ class CurrentEncoder(nn.Module):
             batch_first=True,
             dropout=dropout,
         )
-        self.loc_embed = nn.Embedding(n_locs+1, embedding_dim_loc, padding_idx=0)
-        self.time_embed = nn.Embedding(n_times+1, embedding_dim_time, padding_idx=0)
+        self.loc_embed = nn.Embedding(n_locs + 1, loc_embedding_dim, padding_idx=0)
+        self.time_embed = nn.Embedding(n_times + 1, time_embedding_dim, padding_idx=0)
         self.dropout = nn.Dropout(dropout)
 
-    def forward(self, x, t):
+    def forward(self, x: List[torch.Tensor], t: List[torch.Tensor]):
         traj_lens = torch.tensor([len(xi) for xi in x])
         x_pad = pad_sequence(x, batch_first=True)
         t_pad = pad_sequence(t, batch_first=True)
@@ -48,54 +52,59 @@ class CurrentEncoder(nn.Module):
         xt_embed = torch.cat([x_embed, t_embed], dim=-1)
 
         # Encode trajectory
-        x_packed = pack_padded_sequence(
+        xt_packed = pack_padded_sequence(
             xt_embed, traj_lens, batch_first=True, enforce_sorted=False
         )
-        out, (h, c) = self.lstm(x_packed)  # out.shape = (batch, seq, 2*n_hidden)
-        out_unpacked, lens_unpacked = pad_packed_sequence(out, batch_first=True)
+        _, (h, _) = self.lstm(xt_packed)  # out.shape = (batch, seq, 2*n_hidden)
 
-        return out_unpacked[torch.arange(len(out_unpacked)), lens_unpacked - 1]
-        # shape = (batch_size, 2*n_hidden)
+        return rearrange(h[-self.n_dirs:], "dirs batch hidden -> batch (dirs hidden)")
 
 
 class HistoryEncoder(nn.Module):
     def __init__(
         self,
-        n_hidden,
-        embedding_dim_loc,
-        embedding_dim_time,
-        embedding_dim_user,
-        n_locs,
-        n_times,
-        n_users,
-        dropout,
-        n_layers,
-        device,
+        n_locs: int,
+        n_times: int,
+        n_users: int,
+        n_hidden: int = 64,
+        loc_embedding_dim: int = 64,
+        time_embedding_dim: int = 32,
+        user_embedding_dim: int = 32,
+        dropout: float = 0.6,
+        n_layers: int = 1,
+        device: torch.device = "cuda:0",
     ):
         super().__init__()
         self.n_hidden = n_hidden
         self.n_locs = n_locs
         self.n_times = n_times
         self.n_layers = n_layers
-        self.embedding_dim_loc = embedding_dim_loc
-        self.embedding_dim_time = embedding_dim_time
-        self.embedding_dim_user = embedding_dim_user
-        self.embedding_dim = embedding_dim_time + embedding_dim_loc + embedding_dim_user
+        self.loc_embedding_dim = loc_embedding_dim
+        self.time_embedding_dim = time_embedding_dim
+        self.user_embedding_dim = user_embedding_dim
+        self.embedding_dim = time_embedding_dim + loc_embedding_dim + user_embedding_dim
 
-        self.loc_embed = nn.Embedding(n_locs+1, embedding_dim_loc, padding_idx=0)
-        self.time_embed = nn.Embedding(n_times+1, embedding_dim_time, padding_idx=0)
-        self.user_embed = nn.Embedding(n_users+1, embedding_dim_user, padding_idx=0)
+        self.loc_embed = nn.Embedding(n_locs + 1, loc_embedding_dim, padding_idx=0)
+        self.time_embed = nn.Embedding(n_times + 1, time_embedding_dim, padding_idx=0)
+        self.user_embed = nn.Embedding(n_users + 1, user_embedding_dim, padding_idx=0)
         self.fc_xtu = nn.Linear(self.embedding_dim, 2 * n_hidden)
         self.dropout = nn.Dropout(dropout)
         self.device = device
 
-    def forward(self, x, t, u):
+    def forward(
+        self,
+        x: List[List[torch.Tensor]],
+        t: List[List[torch.Tensor]],
+        u: List[List[int]],
+    ):
         # x.shape = [(len(seq), 1) for seq in seqs for seqs in x]
         all_xt_unique, all_inv_idcs, all_counts, all_u = [], [], [], []
         for xis, tis, uis in zip(x, t, u):
             xi = torch.cat(xis)  # shape = (sum(seq_len), 1)
             ti = torch.cat(tis)  # shape = (sum(seq_len), 1)
-            ui = torch.cat(uis)  # shape = (sum(seq_len), 1)
+            ui = torch.cat(
+                [torch.ones_like(tj) * uj] for tj, uj in zip(tis, uis)
+            )  # shape = (sum(seq_len), 1)
 
             # Step 1: Get unique combinations of location and time IDs
             xti = torch.stack([xi, ti], dim=-1)  # shape = (sum(seq_len), 2)
@@ -107,7 +116,9 @@ class HistoryEncoder(nn.Module):
             all_counts.append(counts)
             all_u.append(ui)
 
-        n_unique = torch.LongTensor([len(count) for count in all_counts])
+        n_unique = torch.LongTensor(
+            [len(count) for count in all_counts], device=self.device
+        )
         counts_padded = pad_sequence(all_counts, batch_first=True, padding_value=-1)
         xt_unique_padded = pad_sequence(all_xt_unique, batch_first=True)
         inv_idcs_padded = pad_sequence(all_inv_idcs, batch_first=True)
@@ -121,11 +132,11 @@ class HistoryEncoder(nn.Module):
         # Step 3: Aggregate user embeddings for each unique (loc, time) pair
         batch_size, n_unique_max, _ = xt_unique_padded.shape
 
-        u_emb_sum = torch.zeros(batch_size, n_unique_max, self.embedding_dim_user)
+        u_emb_sum = torch.zeros(batch_size, n_unique_max, self.user_embedding_dim)
         # Use scatter_add_ to efficiently add u_embeds to emb_sum
         u_emb_sum = u_emb_sum.scatter_add_(
             1,
-            inv_idcs_padded.unsqueeze(-1).expand(-1, -1, self.embedding_dim_user),
+            inv_idcs_padded.unsqueeze(-1).expand(-1, -1, self.user_embedding_dim),
             ui_embed,
         )
         u_embed = u_emb_sum / counts_padded[..., None]
@@ -163,43 +174,51 @@ def history_attention(current, history, history_lens):
 class DeepTUL(nn.Module):
     def __init__(
         self,
-        n_hidden,
-        embedding_dim_loc,
-        embedding_dim_time,
-        embedding_dim_user,
-        n_locs,
-        n_times,
-        n_users,
-        dropout,
-        n_layers,
-        device,
+        n_locs: int,
+        n_times: int,
+        n_users: int,
+        n_hidden: int = 64,
+        loc_embedding_dim: int = 64,
+        time_embedding_dim: int = 32,
+        user_embedding_dim: int = 32,
+        dropout: float = 0.6,
+        n_layers: int = 1,
+        device: torch.device = "cuda:0",
+        bidirectional: bool = True,
     ):
         super().__init__()
         self.c_encoder = CurrentEncoder(
-            n_hidden,
-            embedding_dim_loc,
-            embedding_dim_time,
-            n_locs,
-            n_times,
-            dropout,
-            n_layers,
-            device,
+            n_locs=n_locs,
+            n_times=n_times,
+            n_hidden=n_hidden,
+            loc_embedding_dim=loc_embedding_dim,
+            time_embedding_dim=time_embedding_dim,
+            dropout=dropout,
+            n_layers=n_layers,
+            device=device,
+            bidirectional=bidirectional,
         )
         self.h_encoder = HistoryEncoder(
-            n_hidden,
-            embedding_dim_loc,
-            embedding_dim_time,
-            embedding_dim_user,
-            n_locs,
-            n_times,
-            n_users,
-            dropout,
-            n_layers,
-            device,
+            n_locs=n_locs,
+            n_times=n_times,
+            n_hidden=n_hidden,
+            loc_embedding_dim=loc_embedding_dim,
+            time_embedding_dim=time_embedding_dim,
+            user_embedding_dim=user_embedding_dim,
+            dropout=dropout,
+            n_layers=n_layers,
+            device=device,
         )
         self.clf = nn.Linear(4 * n_hidden, n_users)
 
-    def forward(self, xc, tc, xh, th, uh):
+    def forward(
+        self,
+        xc: List[torch.Tensor],
+        tc: List[torch.Tensor],
+        xh: List[List[torch.Tensor]],
+        th: List[List[torch.Tensor]],
+        uh: List[List[int]],
+    ):
         c_enc = self.c_encoder(xc, tc)
         h_enc, h_lens = self.h_encoder(xh, th, uh)
         hc_attn = history_attention(c_enc, h_enc, h_lens)

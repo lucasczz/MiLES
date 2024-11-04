@@ -1,7 +1,7 @@
 import pytest
 import torch
 
-from src.models.deep_tul import DeepTUL, HistoryEncoder
+from src.models.deeptul import DeepTUL, HistoryEncoder
 
 
 @pytest.fixture
@@ -21,9 +21,9 @@ def history_model():
     # Create the model
     return HistoryEncoder(
         n_hidden=n_hidden,
-        embedding_dim_loc=embedding_dim_loc,
-        embedding_dim_time=embedding_dim_time,
-        embedding_dim_user=embedding_dim_user,
+        loc_embedding_dim=embedding_dim_loc,
+        time_embedding_dim=embedding_dim_time,
+        user_embedding_dim=embedding_dim_user,
         n_locs=n_locs,
         n_times=n_times,
         n_users=n_users,
@@ -50,9 +50,9 @@ def full_model():
     # Create the model
     return DeepTUL(
         n_hidden=n_hidden,
-        embedding_dim_loc=embedding_dim_loc,
-        embedding_dim_time=embedding_dim_time,
-        embedding_dim_user=embedding_dim_user,
+        loc_embedding_dim=embedding_dim_loc,
+        time_embedding_dim=embedding_dim_time,
+        user_embedding_dim=embedding_dim_user,
         n_locs=n_locs,
         n_times=n_times,
         n_users=n_users,
