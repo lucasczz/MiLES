@@ -24,10 +24,9 @@ def masked_max_pool(
     batch_size, max_seq_len, model_dim = encoder_output.shape
 
     # Create mask: (batch_size, max_seq_len)
-    mask = (
-        torch.arange(max_seq_len, device=encoder_output.device)[None, :]
-        >= seq_lengths[:, None]
-    )
+    mask = torch.arange(max_seq_len, device=encoder_output.device).unsqueeze(
+        0
+    ) >= seq_lengths.unsqueeze(-1).to(encoder_output.device)
 
     # Set padding positions to negative infinity
     masked_output = encoder_output.masked_fill(mask.unsqueeze(-1), float("-inf"))
@@ -199,8 +198,8 @@ class MainTUL(nn.Module):
     def __init__(
         self,
         n_locs: int,
-        n_times: int,
         n_users: int,
+        n_times: int = 24,
         n_hidden: int = 1024,
         embedding_dim: int = 512,
         beta: float = 10,
@@ -260,32 +259,35 @@ class MainTUL(nn.Module):
         self,
         xc: List[torch.Tensor],
         tc: List[torch.Tensor],
+        uc: torch.Tensor,
         tcs: List[torch.Tensor],
         xh: List[torch.Tensor],
         th: List[torch.Tensor],
         ths: List[torch.Tensor],
-        users: torch.Tensor,
+        **kwargs
     ):
         lengths_c = torch.tensor([len(xci) for xci in xc])
-        xc_padded = pad_sequence(xc, batch_first=True)
-        tc_padded = pad_sequence(tc, batch_first=True)
-        tcs_padded = pad_sequence(tcs, batch_first=True)
+        xc_padded = pad_sequence(xc, batch_first=True).to(self.device)
+        tc_padded = pad_sequence(tc, batch_first=True).to(self.device)
+        tcs_padded = pad_sequence(tcs, batch_first=True).to(self.device)
 
         lengths_h = torch.tensor([len(xhi) for xhi in xh])
-        xh_padded = pad_sequence(xh, batch_first=True)
-        th_padded = pad_sequence(th, batch_first=True)
-        ths_padded = pad_sequence(ths, batch_first=True)
+        xh_padded = pad_sequence(xh, batch_first=True).to(self.device)
+        th_padded = pad_sequence(th, batch_first=True).to(self.device)
+        ths_padded = pad_sequence(ths, batch_first=True).to(self.device)
+        uc = uc.to(self.device)
+
         out_student1, out_teacher1 = self(
             xc_padded, tc_padded, lengths_c, xh_padded, th_padded, ths_padded, lengths_h
         )
         out_student2, out_teacher2 = self(
             xh_padded, th_padded, lengths_h, xc_padded, tc_padded, tcs_padded, lengths_c
         )
-        ce_loss_student1 = F.cross_entropy(out_student1, users)
-        ce_loss_student2 = F.cross_entropy(out_student2, users)
+        ce_loss_student1 = F.cross_entropy(out_student1, uc)
+        ce_loss_student2 = F.cross_entropy(out_student2, uc)
 
-        ce_loss_teacher1 = F.cross_entropy(out_teacher1, users)
-        ce_loss_teacher2 = F.cross_entropy(out_teacher2, users)
+        ce_loss_teacher1 = F.cross_entropy(out_teacher1, uc)
+        ce_loss_teacher2 = F.cross_entropy(out_teacher2, uc)
 
         loss_dis1 = compute_loss_dis(out_student1, out_teacher1, self.dis_temp)
         loss_dis2 = compute_loss_dis(out_student2, out_teacher2, self.dis_temp)

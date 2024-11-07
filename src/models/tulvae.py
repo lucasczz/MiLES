@@ -106,7 +106,7 @@ class HierarchicalVAE(nn.Module):
         )
 
         loc_embed_shifted = torch.roll(loc_embedded, shifts=1, dims=1)
-        loc_embed_shifted[:, 0] = self.embedding(self.start_token)
+        loc_embed_shifted[:, 0] = self.embedding(self.start_token.to(self.device))
 
         loc_user_embed = torch.cat([loc_embed_shifted, user_one_hot], dim=-1)
 
@@ -179,7 +179,7 @@ class HierarchicalVAE(nn.Module):
             subseq_idx[:subseq_len]
             for subseq_idx, subseq_len in zip(subseq_idcs, subseq_lengths)
         ]
-        return pad_sequence(subseq_idcs, batch_first=True), subseq_lengths
+        return pad_sequence(subseq_idcs, batch_first=True), subseq_lengths.to("cpu")
 
 
 class TULVAE(nn.Module):
@@ -310,15 +310,16 @@ class TULVAE(nn.Module):
         return clf_logits, rec_logits, mu, logvar
 
     def train_step(
-        self, loc: List[torch.Tensor], time: List[torch.Tensor], user_ids: torch.Tensor
+        self, xc: List[torch.Tensor], tc: List[torch.Tensor], uc: torch.Tensor, **kwargs
     ):
 
         # Get sequence lengths and pad the sequences
-        seq_lengths = torch.tensor([len(seq) for seq in loc])
-        loc_padded = pad_sequence(loc, batch_first=True)
+        seq_lengths = torch.tensor([len(seq) for seq in xc])
+        loc_padded = pad_sequence(xc, batch_first=True).to(self.device)
         time_padded = pad_sequence(
-            time, batch_first=True, padding_value=2 * self.n_times
-        )
+            tc, batch_first=True, padding_value=2 * self.n_times
+        ).to(self.device)
+        
 
         # Embed locations
         loc_embedded = self.embedding(loc_padded)
@@ -341,8 +342,22 @@ class TULVAE(nn.Module):
         vae_losses = rec_losses + self.beta * latent_losses
 
         unlab_loss = torch.einsum("ij,ij->i", clf_probas, vae_losses).mean()
-        lab_rec_loss = vae_losses[torch.arange(len(vae_losses)), user_ids].mean()
-        lab_clf_loss = F.cross_entropy(clf_logits, user_ids)
+        lab_rec_loss = vae_losses[torch.arange(len(vae_losses)), uc].mean()
+        lab_clf_loss = F.cross_entropy(clf_logits, uc.to(self.device))
         loss = lab_rec_loss + lab_clf_loss + self.beta * unlab_loss
         return loss
 
+    def pred_step(self, xc: List[torch.Tensor], **kwargs):
+        # Get sequence lengths and pad the sequences
+        seq_lengths = torch.tensor([len(seq) for seq in xc])
+        loc_padded = pad_sequence(xc, batch_first=True)
+        # Embed locations
+        loc_embedded = self.embedding(loc_padded)
+        loc_seq_packed = pack_padded_sequence(
+            loc_embedded, seq_lengths, batch_first=True, enforce_sorted=False
+        )
+        _, (h, _) = self.clf_lstm(loc_seq_packed)
+        h = self.dropout(h)
+        h = rearrange(h[-self.n_dirs :], "dir batch hidden -> batch (dir hidden)")
+        clf_logits = self.clf_out(h)
+        return clf_logits
