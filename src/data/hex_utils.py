@@ -1,10 +1,7 @@
 from matplotlib import patches
 import numpy as np
 import geopandas as gpd
-from geopandas.array import GeometryArray
 import pandas as pd
-from pyproj import Transformer
-from shapely import Polygon
 import folium
 import torch
 
@@ -22,7 +19,11 @@ def get_hex_size(limits, n_rows):
     return (limits[1, 1] - limits[0, 1]) / ((n_rows + 0.5) * np.sqrt(3))
 
 
-def hexagonize(df, n_rows, limits):
+def hexagonize(df, n_rows):
+
+    limits = np.array(
+        [[df["lon"].min(), df["lat"].min()], [df["lon"].max(), df["lat"].max()]]
+    )
     hex_size = get_hex_size(limits=limits, n_rows=n_rows)
 
     xy = df[["lon", "lat"]].values
