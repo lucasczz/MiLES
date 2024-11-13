@@ -1,142 +1,193 @@
-from typing import List
+from functools import partial
+from typing import List, Literal
+from einops import rearrange
 from torchmetrics.functional import accuracy
 
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from torch.nn.utils.rnn import pack_padded_sequence, pad_sequence
-import lightning as L
+
+from src.models.embedding import EMBEDDING_TYPES
 
 
-class MultilevelEmbedding(nn.Module):
-    def __init__(self, num_embeddings, embedding_dim, init="default") -> None:
-        super().__init__()
-        self.num_embeddings = num_embeddings
-        self.embedding_dim = embedding_dim
-        self.init = init
-        # TODO: add option to initialize lower levels to zero
-        self.levels = nn.ModuleList(
-            [nn.Embedding(n, embedding_dim) for n in num_embeddings]
-        )
-
-    def forward(self, x):
-        level_embeddings = torch.stack(
-            [level(x[..., idx]) for idx, level in enumerate(self.levels)]
-        )
-        return level_embeddings.sum(dim=0)
-
-
-class GRUClassifier(L.LightningModule):
+class TULER(nn.Module):
     def __init__(
         self,
         n_locs: List[int],
+        n_times: List[int],
         n_users: int,
-        n_time_intervals: int,
+        embedding_type: str = "lookup",
         loc_embedding_dim: int = 16,
-        time_embedding_dim: int = 16,
+        time_embedding_dim: int = 8,
         hidden_size: int = 256,
         n_layers: int = 3,
-        lr: float = 0.001,
-        weight_decay: float = 0.0001,
-        loss_fn: str = "cross_entropy",
-        optim_fn: str = "AdamW",
-        bidirectional: bool = False,
+        bidirectional: bool = True,
         dropout: float = 0,
-        user_weight: List = None,
+        rnn_type: Literal["LSTM", "GRU"] = "LSTM",
+        device: torch.device = "cuda:0",
+        **kwargs,
     ):
         super().__init__()
         self.n_locs = n_locs
         self.n_users = n_users
         self.hidden_size = hidden_size
         self.n_layers = n_layers
-        self.lr = lr
-        self.weight_decay = weight_decay
-        self.loss_fn = getattr(F, loss_fn)
-        self.optim_fn = getattr(torch.optim, optim_fn)
-        self.dropout = dropout
-        self.user_weight = user_weight if user_weight else [1 / n_users] * n_users
-        self.n_time_intervals = n_time_intervals
 
-        # Model parameters
-        self.save_hyperparameters()
+        self.dropout = nn.Dropout(dropout)
+        self.device = device
+        self.n_dirs = 1 + bidirectional
 
         # Embeddings
-        self.loc_embedding = MultilevelEmbedding(n_locs, loc_embedding_dim)
-
-        self.time_embedding = nn.Embedding(n_time_intervals, time_embedding_dim)
-
-        # Encoder
-        self.fc_enc = nn.Linear(loc_embedding_dim + time_embedding_dim, hidden_size)
-        self.encoder = nn.GRU(
-            input_size=hidden_size,
-            hidden_size=hidden_size,
-            num_layers=n_layers,
-            batch_first=True,
-            bidirectional=bidirectional,
-            dropout=dropout,
+        self.embedding = EMBEDDING_TYPES[embedding_type](
+            num_embeddings_loc=n_locs,
+            embedding_dim_loc=loc_embedding_dim,
+            num_embeddings_time=n_times,
+            embedding_dim_time=time_embedding_dim,
         )
-        self.fc_clf = nn.Linear(hidden_size, self.n_users)
+        self.rnn_type = rnn_type
 
-        # Optimizer and loss function
-        self.loss_fn = getattr(F, loss_fn)
-        self.optim_fn = getattr(torch.optim, optim_fn)
+        if rnn_type == "GRU":
+            self.encoder = nn.GRU(
+                input_size=loc_embedding_dim,
+                hidden_size=hidden_size,
+                num_layers=n_layers,
+                batch_first=True,
+                bidirectional=bidirectional,
+                dropout=dropout,
+            )
+        else:
+            self.encoder = nn.LSTM(
+                input_size=loc_embedding_dim,
+                hidden_size=hidden_size,
+                num_layers=n_layers,
+                batch_first=True,
+                bidirectional=bidirectional,
+                dropout=dropout,
+            )
+        self.fc_clf = nn.Linear(self.n_dirs * hidden_size, self.n_users)
 
-    def forward(
-        self,
-        x: torch.Tensor,
-        t: torch.Tensor,
-    ):
+    def forward(self, x: torch.Tensor, t: torch.Tensor):
         # Embedding lookups
         traj_lens = torch.tensor([len(xi) for xi in x])
         x_pad = pad_sequence(x, batch_first=True)
         t_pad = pad_sequence(t, batch_first=True)
-        t_embed = self.time_embedding(t_pad)
-        x_embed = self.loc_embedding(x_pad)
-        traj_embed = torch.cat([x_embed, t_embed], dim=-1)
+        x_embedded = self.embedding(x_pad, t_pad)
 
         # Encode trajectory
-        traj_enc = self.fc_enc(traj_embed)
         x_packed = pack_padded_sequence(
-            traj_enc, traj_lens, batch_first=True, enforce_sorted=False
+            x_embedded, traj_lens, batch_first=True, enforce_sorted=False
         )
-        _, h_enc = self.encoder(x_packed)
-
-        y_pred = self.fc_clf(h_enc[-1])
+        if self.rnn_type == "GRU":
+            _, h = self.encoder(x_packed)
+        else:
+            _, (h, _) = self.encoder(x_packed)
+        h = rearrange(h[-self.n_dirs :], "dirs batch hidden -> batch (dirs hidden)")
+        y_pred = self.fc_clf(self.dropout(h))
 
         return y_pred
 
-    def configure_optimizers(self):
-        optim = self.optim_fn(
-            self.parameters(), lr=self.lr, weight_decay=self.weight_decay
-        )
-        return [optim], []
-
-    def training_step(self, batch, batch_idx=0):
-        x, y, t = batch
-        y_pred = self(x, t)
-
-        user_weight = torch.tensor(self.user_weight, device=self.device)
-        loss = self.loss_fn(y_pred, y, weight=user_weight)
-
-        acc = accuracy(
-            y_pred, y, task="multiclass", num_classes=self.n_users, average="micro"
-        )
-        self.log("train_top1_accuracy", acc, batch_size=len(x))
-        self.log("train_loss", loss, batch_size=len(x))
+    def train_step(
+        self, xc: List[torch.Tensor], tc: List[torch.Tensor], uc: torch.Tensor, **kwargs
+    ):
+        xc_padded = pad_sequence(xc, batch_first=True).to(self.device)
+        tc_padded = pad_sequence(tc, batch_first=True).to(self.device)
+        preds = self(xc_padded, tc_padded)
+        loss = F.cross_entropy(preds, uc.to(self.device))
         return loss
 
-    def validation_step(self, batch, batch_idx=0):
-        x, y, t = batch
-        y_pred = self(x, t)
+    def pred_step(self, xc: List[torch.Tensor], uc: torch.Tensor, **kwargs):
+        xc_padded = pad_sequence(xc, batch_first=True).to(self.device)
+        preds = self(xc_padded)
+        return preds
 
-        user_weight = torch.tensor(self.user_weight, device=self.device)
-        loss = self.loss_fn(y_pred, y, weight=user_weight)
 
-        top1_acc = accuracy(y_pred, y, task="multiclass", num_classes=self.n_users)
-        top5_acc = accuracy(
-            y_pred, y, task="multiclass", num_classes=self.n_users, top_k=5
+class BiTULER(TULER):
+    def __init__(
+        self,
+        n_locs: List[int],
+        n_times: List[int],
+        n_users: int,
+        embedding_type: str = "lookup",
+        loc_embedding_dim: int = 16,
+        time_embedding_dim: int = 8,
+        hidden_size=256,
+        n_layers=3,
+        dropout=0,
+        rnn_type="LSTM",
+        device="cuda:0",
+    ):
+        super().__init__(
+            n_locs=n_locs,
+            n_users=n_users,
+            n_times=n_times,
+            embedding_type=embedding_type,
+            loc_embedding_dim=loc_embedding_dim,
+            time_embedding_dim=time_embedding_dim,
+            hidden_size=hidden_size,
+            n_layers=n_layers,
+            dropout=dropout,
+            rnn_type=rnn_type,
+            device=device,
+            bidirectional=True,
         )
-        self.log("val_top1_accuracy", top1_acc, batch_size=len(x))
-        self.log("val_top5_accuracy", top5_acc, batch_size=len(x))
-        self.log("val_loss", loss, batch_size=len(x))
-        return loss
+
+
+class TULERG(TULER):
+    def __init__(
+        self,
+        n_locs: List[int],
+        n_times: List[int],
+        n_users: int,
+        embedding_type: str = "lookup",
+        loc_embedding_dim: int = 16,
+        time_embedding_dim: int = 8,
+        hidden_size=256,
+        n_layers=3,
+        dropout=0,
+        device="cuda:0",
+    ):
+        super().__init__(
+            n_locs=n_locs,
+            n_users=n_users,
+            n_times=n_times,
+            embedding_type=embedding_type,
+            loc_embedding_dim=loc_embedding_dim,
+            time_embedding_dim=time_embedding_dim,
+            hidden_size=hidden_size,
+            n_layers=n_layers,
+            dropout=dropout,
+            rnn_type="GRU",
+            device=device,
+            bidirectional=False,
+        )
+
+
+class TULERL(TULER):
+    def __init__(
+        self,
+        n_locs: List[int],
+        n_times: List[int],
+        n_users: int,
+        embedding_type: str = "lookup",
+        loc_embedding_dim: int = 16,
+        time_embedding_dim: int = 8,
+        hidden_size=256,
+        n_layers=3,
+        dropout=0,
+        device="cuda:0",
+    ):
+        super().__init__(
+            n_locs=n_locs,
+            n_users=n_users,
+            n_times=n_times,
+            embedding_type=embedding_type,
+            loc_embedding_dim=loc_embedding_dim,
+            time_embedding_dim=time_embedding_dim,
+            hidden_size=hidden_size,
+            n_layers=n_layers,
+            dropout=dropout,
+            rnn_type="LSTM",
+            device=device,
+            bidirectional=False,
+        )

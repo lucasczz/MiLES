@@ -5,6 +5,8 @@ import torch.nn.functional as F
 from torch.nn.utils.rnn import pack_padded_sequence, pad_sequence
 from einops import rearrange
 
+from src.models.embedding import EMBEDDING_TYPES
+
 
 class CurrentEncoder(nn.Module):
     def __init__(
@@ -12,6 +14,7 @@ class CurrentEncoder(nn.Module):
         n_locs,
         n_times,
         n_hidden: int = 64,
+        embedding_type: str = "lookup",
         loc_embedding_dim: int = 64,
         time_embedding_dim: int = 32,
         dropout: float = 0.6,
@@ -26,30 +29,27 @@ class CurrentEncoder(nn.Module):
         self.n_times = n_times
         self.n_layers = n_layers
         self.n_dirs = 1 + bidirectional
-        self.loc_embedding_dim = loc_embedding_dim
-        self.time_embedding_dim = time_embedding_dim
-        self.embedding_dim = time_embedding_dim + loc_embedding_dim
-
+        self.embedding = EMBEDDING_TYPES[embedding_type](
+            num_embeddings_loc=n_locs,
+            embedding_dim_loc=loc_embedding_dim,
+            num_embeddings_time=n_times,
+            embedding_dim_time=time_embedding_dim,
+        )
         self.lstm = nn.LSTM(
-            self.embedding_dim,
+            self.embedding.dim,
             n_hidden,
             bidirectional=True,
             batch_first=True,
             dropout=dropout,
         )
-        self.loc_embed = nn.Embedding(n_locs + 1, loc_embedding_dim, padding_idx=0)
-        self.time_embed = nn.Embedding(n_times + 1, time_embedding_dim, padding_idx=0)
+
         self.dropout = nn.Dropout(dropout)
 
     def forward(self, x: List[torch.Tensor], t: List[torch.Tensor]):
         traj_lens = torch.tensor([len(xi) for xi in x])
         x_pad = pad_sequence(x, batch_first=True).to(self.device)
         t_pad = pad_sequence(t, batch_first=True).to(self.device)
-        x_embed = self.loc_embed(x_pad)
-        t_embed = self.time_embed(t_pad)
-        x_embed = self.dropout(x_embed)
-        t_embed = self.dropout(t_embed)
-        xt_embed = torch.cat([x_embed, t_embed], dim=-1)
+        xt_embed = self.dropout(self.embedding(x_pad, t_pad))
 
         # Encode trajectory
         xt_packed = pack_padded_sequence(
@@ -67,6 +67,7 @@ class HistoryEncoder(nn.Module):
         n_times: int,
         n_users: int,
         n_hidden: int = 64,
+        embedding_type: str = "lookup",
         loc_embedding_dim: int = 64,
         time_embedding_dim: int = 32,
         user_embedding_dim: int = 32,
@@ -79,13 +80,15 @@ class HistoryEncoder(nn.Module):
         self.n_locs = n_locs
         self.n_times = n_times
         self.n_layers = n_layers
-        self.loc_embedding_dim = loc_embedding_dim
-        self.time_embedding_dim = time_embedding_dim
+        self.embedding = EMBEDDING_TYPES[embedding_type](
+            num_embeddings_loc=n_locs,
+            embedding_dim_loc=loc_embedding_dim,
+            num_embeddings_time=n_times,
+            embedding_dim_time=time_embedding_dim,
+        )
         self.user_embedding_dim = user_embedding_dim
-        self.embedding_dim = time_embedding_dim + loc_embedding_dim + user_embedding_dim
+        self.embedding_dim = self.embedding.dim + user_embedding_dim
 
-        self.loc_embed = nn.Embedding(n_locs + 1, loc_embedding_dim, padding_idx=0)
-        self.time_embed = nn.Embedding(n_times + 1, time_embedding_dim, padding_idx=0)
         self.user_embed = nn.Embedding(n_users + 1, user_embedding_dim, padding_idx=0)
         self.fc_xtu = nn.Linear(self.embedding_dim, 2 * n_hidden)
         self.dropout = nn.Dropout(dropout)
@@ -98,17 +101,18 @@ class HistoryEncoder(nn.Module):
         u: List[torch.Tensor],
     ):
         # x.shape = [(len(seq), 1) for seq in seqs for seqs in x]
-        all_xt_unique, all_inv_idcs, all_counts, all_u = [], [], [], []
-        for xi, ti, ui in zip(x, t, u):
+        all_xt_unique, all_inv_idcs, all_counts = [], [], []
+        for xi, ti in zip(x, t):
             # Step 1: Get unique combinations of location and time IDs
-            xti = torch.stack([xi, ti], dim=-1)  # shape = (sum(seq_len), 2)
+            xti = torch.stack(
+                [xi[..., 0], ti[..., 0]], dim=-1
+            )  # shape = (sum(seq_len), 2)
             xt_unique, inv_idcs, counts = torch.unique(
                 xti, dim=0, return_inverse=True, return_counts=True
             )
             all_xt_unique.append(xt_unique)
             all_inv_idcs.append(inv_idcs)
             all_counts.append(counts)
-            all_u.append(ui)
 
         n_unique = torch.tensor(
             [len(count) for count in all_counts], device=self.device, dtype=torch.int64
@@ -118,11 +122,14 @@ class HistoryEncoder(nn.Module):
         )
         xt_unique_padded = pad_sequence(all_xt_unique, batch_first=True).to(self.device)
         inv_idcs_padded = pad_sequence(all_inv_idcs, batch_first=True).to(self.device)
-        u_padded = pad_sequence(all_u, batch_first=True).to(self.device)
+        u_padded = pad_sequence(u, batch_first=True).to(self.device)
 
         # Step 2: Embed locations and times
-        x_embed = self.dropout(self.loc_embed(xt_unique_padded[..., 0]))
-        t_embed = self.dropout(self.time_embed(xt_unique_padded[..., 1]))
+        xt_embed = self.dropout(
+            self.embedding(
+                xt_unique_padded[..., 0, None], xt_unique_padded[..., 1, None]
+            )
+        )
         ui_embed = self.dropout(self.user_embed(u_padded))
 
         # Step 3: Aggregate user embeddings for each unique (loc, time) pair
@@ -140,7 +147,7 @@ class HistoryEncoder(nn.Module):
         u_embed = u_emb_sum / counts_padded[..., None]
 
         # Step 4: Combine embeddings
-        xtu_embed = torch.cat([x_embed, t_embed, u_embed], dim=-1)
+        xtu_embed = torch.cat([xt_embed, u_embed], dim=-1)
         xtu_embed = self.dropout(xtu_embed)
 
         return F.tanh(self.fc_xtu(xtu_embed)), n_unique
@@ -178,6 +185,7 @@ class DeepTUL(nn.Module):
         n_times: int,
         n_users: int,
         n_hidden: int = 64,
+        embedding_type: str = "lookup",
         loc_embedding_dim: int = 64,
         time_embedding_dim: int = 32,
         user_embedding_dim: int = 32,
@@ -191,6 +199,7 @@ class DeepTUL(nn.Module):
             n_locs=n_locs,
             n_times=n_times,
             n_hidden=n_hidden,
+            embedding_type=embedding_type,
             loc_embedding_dim=loc_embedding_dim,
             time_embedding_dim=time_embedding_dim,
             dropout=dropout,
@@ -203,6 +212,7 @@ class DeepTUL(nn.Module):
             n_times=n_times,
             n_hidden=n_hidden,
             n_users=n_users,
+            embedding_type=embedding_type,
             loc_embedding_dim=loc_embedding_dim,
             time_embedding_dim=time_embedding_dim,
             user_embedding_dim=user_embedding_dim,
@@ -235,12 +245,20 @@ class DeepTUL(nn.Module):
         xc: List[torch.Tensor],
         tc: List[torch.Tensor],
         uc: torch.Tensor,
-        xh: List[torch.Tensor],
-        th: List[torch.Tensor],
+        xh: List[List[torch.Tensor]],
+        th: List[List[torch.Tensor]],
         uh: List[torch.Tensor],
         **kwargs
     ):
-        preds = self(xc, tc, xh, th, uh)
+        xh_cat, th_cat, uh_cat = [], [], []
+        for xhi, thi, uhi in zip(xh, th, uh):
+            xh_cat.append(torch.cat(xhi))
+            th_cat.append(torch.cat(thi))
+            uh_cat.append(
+                uhi.repeat_interleave(torch.tensor([len(xhij) for xhij in xhi]))
+            )
+
+        preds = self(xc, tc, xh_cat, th_cat, uh_cat)
         loss = F.cross_entropy(preds, uc.to(self.device))
         return loss
 
@@ -254,5 +272,4 @@ class DeepTUL(nn.Module):
         **kwargs
     ):
 
-        with torch.inference_mode():
-            return self(xc, tc, xh, th, uh)
+        return self(xc, tc, xh, th, uh)

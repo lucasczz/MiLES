@@ -6,6 +6,8 @@ from typing import List, Tuple
 
 from einops import rearrange
 
+from src.models.embedding import EMBEDDING_TYPES
+
 
 class HierarchicalVAE(nn.Module):
     def __init__(
@@ -14,7 +16,9 @@ class HierarchicalVAE(nn.Module):
         n_times: int,
         n_users: int,
         n_hidden: int = 300,
-        embedding_dim: int = 250,
+        embedding_type: str = "lookup",
+        loc_embedding_dim: int = 250,
+        time_embedding_dim: int = 50,
         latent_dim: int = 50,
         bidirectional: bool = True,
         dropout: float = 0.5,
@@ -27,18 +31,26 @@ class HierarchicalVAE(nn.Module):
         self.n_hidden = n_hidden
         self.latent_dim = latent_dim
         self.n_dirs = 1 + bidirectional
-        self.n_locs = n_locs
-        self.n_times = n_times
+        self.n_locs = [n_loc + 1 for n_loc in n_locs]
+        self.n_times = [n_time + 1 for n_time in n_times]
         self.n_layers = n_layers
         self.n_users = n_users
         self.subseq_steps = subseq_steps
-        self.embedding_dim = embedding_dim
         self.dropout = nn.Dropout(dropout)
-        self.start_token = torch.tensor(n_locs + 1)
+        self.start_loc = torch.tensor(n_locs)[None, :]
+        self.start_time = torch.tensor(n_times)[None, :]
+
+        # Embedding
+        self.embedding = EMBEDDING_TYPES[embedding_type](
+            num_embeddings_loc=n_locs,
+            embedding_dim_loc=loc_embedding_dim,
+            num_embeddings_time=n_times,
+            embedding_dim_time=time_embedding_dim,
+        )
 
         # LSTM Encoders and Decoder without dropout in constructor
         self.poi_encoder_lstm = nn.LSTM(
-            embedding_dim, n_hidden, bidirectional=bidirectional, batch_first=True
+            self.embedding.dim, n_hidden, bidirectional=bidirectional, batch_first=True
         )
         self.subseq_encoder_lstm = nn.LSTM(
             self.n_dirs * n_hidden,
@@ -47,7 +59,7 @@ class HierarchicalVAE(nn.Module):
             batch_first=True,
         )
         self.decoder_lstm = nn.LSTM(
-            embedding_dim + n_users,
+            self.embedding.dim + n_users,
             n_hidden,
             bidirectional=bidirectional,
             batch_first=True,
@@ -61,10 +73,7 @@ class HierarchicalVAE(nn.Module):
 
         # Decoder input projection
         self.fc_decoder_input = nn.Linear(2 * latent_dim, self.n_dirs * n_hidden)
-        self.fc_output = nn.Linear(self.n_dirs * n_hidden, n_locs + 3)
-
-        # Embedding
-        self.embedding = nn.Embedding(n_locs + 3, embedding_dim, padding_idx=0)
+        self.fc_output = nn.Linear(self.n_dirs * n_hidden, self.n_locs[0])
 
     def forward(
         self,
@@ -106,7 +115,9 @@ class HierarchicalVAE(nn.Module):
         )
 
         loc_embed_shifted = torch.roll(loc_embedded, shifts=1, dims=1)
-        loc_embed_shifted[:, 0] = self.embedding(self.start_token.to(self.device))
+        loc_embed_shifted[:, 0] = self.embedding(
+            self.start_loc.to(self.device), self.start_time.to(self.device)
+        )
 
         loc_user_embed = torch.cat([loc_embed_shifted, user_one_hot], dim=-1)
 
@@ -144,7 +155,7 @@ class HierarchicalVAE(nn.Module):
         unpacked_output, _ = pad_packed_sequence(packed_output, batch_first=True)
 
         batch_size, max_subseq_len, n_hidden = unpacked_output.shape
-        subseq_indices, subseq_lengths = self.get_subseq_indices(time_padded)
+        subseq_indices, subseq_lengths = self.get_subseq_indices(time_padded[..., 0])
         subseq_input = unpacked_output.gather(
             1, subseq_indices.unsqueeze(-1).expand(-1, -1, n_hidden)
         )
@@ -162,7 +173,7 @@ class HierarchicalVAE(nn.Module):
     ) -> Tuple[torch.Tensor, torch.Tensor]:
         time_deltas = time_padded - time_padded[:, 0, None]
         time_intervals = (
-            torch.arange(0, self.n_times + 1, self.subseq_steps, device=self.device)
+            torch.arange(0, self.n_times[0], self.subseq_steps, device=self.device)
             .unsqueeze(0)
             .expand(time_deltas.shape[0], -1)
             .contiguous()
@@ -210,7 +221,9 @@ class TULVAE(nn.Module):
         n_users: int,
         n_hidden_ae: int = 300,
         n_hidden_clf: int = 512,
-        embedding_dim: int = 300,
+        embedding_type: str = "lookup",
+        loc_embedding_dim: int = 300,
+        time_embedding_dim: int = 50,
         latent_dim: int = 50,
         bidirectional: bool = True,
         dropout: float = 0.5,
@@ -231,7 +244,7 @@ class TULVAE(nn.Module):
         self.n_dirs = 1 + bidirectional
         # Classifier components
         self.clf_lstm = nn.LSTM(
-            embedding_dim,
+            loc_embedding_dim,
             n_hidden_clf,
             num_layers=n_layers,
             bidirectional=True,
@@ -247,7 +260,9 @@ class TULVAE(nn.Module):
             n_times=n_times,
             n_users=n_users,
             n_hidden=n_hidden_ae,
-            embedding_dim=embedding_dim,
+            embedding_type=embedding_type,
+            loc_embedding_dim=loc_embedding_dim,
+            time_embedding_dim=time_embedding_dim,
             latent_dim=latent_dim,
             bidirectional=bidirectional,
             dropout=dropout,
@@ -315,24 +330,23 @@ class TULVAE(nn.Module):
 
         # Get sequence lengths and pad the sequences
         seq_lengths = torch.tensor([len(seq) for seq in xc])
-        loc_padded = pad_sequence(xc, batch_first=True).to(self.device)
+        x_padded = pad_sequence(xc, batch_first=True).to(self.device)
         time_padded = pad_sequence(
-            tc, batch_first=True, padding_value=2 * self.n_times
+            tc, batch_first=True, padding_value=2 * self.n_times[0]
         ).to(self.device)
-        
 
         # Embed locations
-        loc_embedded = self.embedding(loc_padded)
-
-        clf_logits, rec_logits, mu, logvar = self(
-            loc_embedded, time_padded, seq_lengths
+        xt_embedded = self.embedding(
+            x_padded, pad_sequence(tc, batch_first=True).to(self.device)
         )
+
+        clf_logits, rec_logits, mu, logvar = self(xt_embedded, time_padded, seq_lengths)
         # clf_logits.shape = (batch_size, n_users)
         # rec_logits.shape = (batch_size, n_locs, n_users, max_seq_len)
         # loc_padded.shape = (batch_size, max_seq_len)
         # loc.shape = (batch_size, max_seq_len)
         clf_probas = torch.softmax(clf_logits, dim=-1)
-        rec_targets = loc_padded.unsqueeze(1).expand(-1, self.n_users, -1)
+        rec_targets = x_padded[..., 0].unsqueeze(1).expand(-1, self.n_users, -1)
         rec_losses = F.cross_entropy(
             rec_logits, rec_targets, ignore_index=0, reduction="none"
         )
@@ -347,12 +361,13 @@ class TULVAE(nn.Module):
         loss = lab_rec_loss + lab_clf_loss + self.beta * unlab_loss
         return loss
 
-    def pred_step(self, xc: List[torch.Tensor], **kwargs):
+    def pred_step(self, xc: List[torch.Tensor], tc: List[torch.Tensor], **kwargs):
         # Get sequence lengths and pad the sequences
         seq_lengths = torch.tensor([len(seq) for seq in xc])
-        loc_padded = pad_sequence(xc, batch_first=True)
+        x_padded = pad_sequence(xc, batch_first=True)
+        t_padded = pad_sequence(tc, batch_first=True)
         # Embed locations
-        loc_embedded = self.embedding(loc_padded)
+        loc_embedded = self.embedding(x_padded, t_padded)
         loc_seq_packed = pack_padded_sequence(
             loc_embedded, seq_lengths, batch_first=True, enforce_sorted=False
         )
