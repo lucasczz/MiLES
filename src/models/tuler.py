@@ -8,7 +8,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torch.nn.utils.rnn import pack_padded_sequence, pad_sequence
 
-from src.models.embedding import EMBEDDING_TYPES
+from src.embedding import EMBEDDING_TYPES
 
 
 class TULER(nn.Module):

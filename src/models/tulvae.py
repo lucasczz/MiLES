@@ -6,7 +6,7 @@ from typing import List, Tuple
 
 from einops import rearrange
 
-from src.models.embedding import EMBEDDING_TYPES
+from src.embedding import EMBEDDING_TYPES
 
 
 class HierarchicalVAE(nn.Module):

@@ -5,7 +5,7 @@ import torch.nn.functional as F
 from torch.nn.utils.rnn import pad_sequence, pack_padded_sequence
 import torch
 
-from src.models.embedding import EMBEDDING_TYPES
+from src.embedding import EMBEDDING_TYPES
 
 
 class T3S(nn.Module):

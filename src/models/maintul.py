@@ -1,3 +1,4 @@
+from bisect import bisect
 import math
 import random
 from typing import List, Literal
@@ -8,7 +9,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torch.nn.utils.rnn import pack_padded_sequence, pad_packed_sequence, pad_sequence
 
-from src.models.embedding import EMBEDDING_TYPES, CosineEmbedding
+from src.embedding import EMBEDDING_TYPES, CosineEmbedding
 
 
 def masked_max_pool(
@@ -211,39 +212,39 @@ class MainTUL(nn.Module):
         out_teacher1 = self.teacher(xh_padded, th_padded, lengths_h)
         return out_student1, out_teacher1
 
-    def filter_user_history(self, uc, xh, th, uh):
+    def augment_trajectory(self, xc, tc, uc, xh, th, uh):
         # Determine indices where uh matches uc
-        idcs = [
-            [idx for idx, value in enumerate(uhi) if value == uci]
-            for uhi, uci in zip(uh, uc)
-        ]
+        mask = uc[:, None] == uh[None, :]
+        idcs = [mask_i.nonzero().view(-1) for mask_i in mask]
 
         # Shuffle only if augment strategy is "random"
         if self.augment_strategy == "random":
-            idcs = [matching_idcs[: self.n_augment] for matching_idcs in idcs]
-            for matching_idcs in idcs:
-                np.random.shuffle(matching_idcs)
+            for idx, idcs_i in enumerate(idcs):
+                sample_idcs = torch.randperm(len(idcs_i))[: self.n_augment].sort()[0]
+                idcs[idx] = idcs_i[sample_idcs]
 
         # Slice the last n_augment indices in case of "last" strategy
         elif len(idcs) > self.n_augment:
-            idcs = [matching_idcs[-self.n_augment :] for matching_idcs in idcs]
+            idcs = [idcs_i[-self.n_augment :] for idcs_i in idcs]
 
-        # Filter and concatenate trajectories based on indices in a single loop
-        xh_user, th_user = [], []
-        for xhi, thi, matching_idcs in zip(xh, th, idcs):
-            xh_user.append(torch.cat([xhi[i] for i in matching_idcs], dim=0))
-            th_user.append(torch.cat([thi[i] for i in matching_idcs], dim=0))
+        xhs = [[xh[idx] for idx in idcs_i] for idcs_i in idcs]
+        ths = [[th[idx] for idx in idcs_i] for idcs_i in idcs]
 
-        return xh_user, th_user
+        for xci, tci, xhi, thi, idcs_i in zip(xc, tc, xhs, ths, idcs):
+            idx = bisect(thi, tci[-1, -1], key=lambda r: r[-1, -1])
+            xhi.insert(idx, xci)
+            thi.insert(idx, tci)
+
+        return [torch.cat(xhi) for xhi in xhs], [torch.cat(thi) for thi in ths]
 
     def train_step(
         self,
         xc: List[torch.Tensor],
         tc: List[torch.Tensor],
         uc: torch.Tensor,
-        xh: List[List[torch.Tensor]],
-        th: List[List[torch.Tensor]],
-        uh: List[torch.Tensor],
+        xh: List[torch.Tensor],
+        th: List[torch.Tensor],
+        uh: torch.Tensor,
         **kwargs
     ):
         # uh.shape = [(n_sequences, ) for _ in range(batch_size)]
@@ -251,7 +252,7 @@ class MainTUL(nn.Module):
         xc_padded = pad_sequence(xc, batch_first=True).to(self.device)
         tc_padded = pad_sequence(tc, batch_first=True).to(self.device)
 
-        xh_user, th_user = self.filter_user_history(uc, xh, th, uh)
+        xh_user, th_user = self.augment_trajectory(xc, tc, uc, xh, th, uh)
         lengths_h = torch.tensor([len(xhi) for xhi in xh_user])
         # Pad the subsampled trajectories
         xh_padded = pad_sequence([x for x in xh_user], batch_first=True).to(self.device)

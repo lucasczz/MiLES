@@ -1,3 +1,4 @@
+import math
 from typing import List
 from torch import nn
 import torch
@@ -5,7 +6,7 @@ import torch.nn.functional as F
 from torch.nn.utils.rnn import pack_padded_sequence, pad_sequence
 from einops import rearrange
 
-from src.models.embedding import EMBEDDING_TYPES
+from src.embedding import EMBEDDING_TYPES
 
 
 class CurrentEncoder(nn.Module):
@@ -55,7 +56,7 @@ class CurrentEncoder(nn.Module):
         xt_packed = pack_padded_sequence(
             xt_embed, traj_lens, batch_first=True, enforce_sorted=False
         )
-        _, (h, _) = self.lstm(xt_packed)  # out.shape = (batch, seq, 2*n_hidden)
+        _, (h, _) = self.lstm(xt_packed)
 
         return rearrange(h[-self.n_dirs :], "dirs batch hidden -> batch (dirs hidden)")
 
@@ -96,82 +97,56 @@ class HistoryEncoder(nn.Module):
 
     def forward(
         self,
-        x: List[torch.Tensor],
-        t: List[torch.Tensor],
-        u: List[torch.Tensor],
+        x: torch.Tensor,
+        t: torch.Tensor,
+        u: torch.Tensor,
     ):
-        # x.shape = [(len(seq), 1) for seq in seqs for seqs in x]
-        all_xt_unique, all_inv_idcs, all_counts = [], [], []
-        for xi, ti in zip(x, t):
-            # Step 1: Get unique combinations of location and time IDs
-            xti = torch.stack(
-                [xi[..., 0], ti[..., 0]], dim=-1
-            )  # shape = (sum(seq_len), 2)
-            xt_unique, inv_idcs, counts = torch.unique(
-                xti, dim=0, return_inverse=True, return_counts=True
-            )
-            all_xt_unique.append(xt_unique)
-            all_inv_idcs.append(inv_idcs)
-            all_counts.append(counts)
+        # x.shape = (seq_len, n_features)
 
-        n_unique = torch.tensor(
-            [len(count) for count in all_counts], device=self.device, dtype=torch.int64
+        # Step 1: Get unique combinations of location and time IDs
+        xt = torch.stack([x[..., 0], t[..., 0]], dim=-1)  # shape = (sum(seq_len), 2)
+        xt_unique, inv_idcs, counts = torch.unique(
+            xt, dim=0, return_inverse=True, return_counts=True
         )
-        counts_padded = pad_sequence(all_counts, batch_first=True, padding_value=-1).to(
-            self.device
-        )
-        xt_unique_padded = pad_sequence(all_xt_unique, batch_first=True).to(self.device)
-        inv_idcs_padded = pad_sequence(all_inv_idcs, batch_first=True).to(self.device)
-        u_padded = pad_sequence(u, batch_first=True).to(self.device)
+
+        xt_unique = xt_unique.to(self.device)
+        inv_idcs = inv_idcs.to(self.device)
+        counts = counts.to(self.device)
+
+        n_unique = xt_unique.shape[0]
 
         # Step 2: Embed locations and times
         xt_embed = self.dropout(
-            self.embedding(
-                xt_unique_padded[..., 0, None], xt_unique_padded[..., 1, None]
-            )
+            self.embedding(xt_unique[..., 0, None], xt_unique[..., 1, None])
         )
-        ui_embed = self.dropout(self.user_embed(u_padded))
+        ui_embed = self.dropout(self.user_embed(u.to(self.device)))
 
         # Step 3: Aggregate user embeddings for each unique (loc, time) pair
-        batch_size, n_unique_max, _ = xt_unique_padded.shape
-
-        u_emb_sum = torch.zeros(
-            batch_size, n_unique_max, self.user_embedding_dim, device=self.device
-        )
+        u_emb_sum = torch.zeros(n_unique, self.user_embedding_dim, device=self.device)
         # Use scatter_add_ to efficiently add u_embeds to emb_sum
         u_emb_sum = u_emb_sum.scatter_add_(
-            1,
-            inv_idcs_padded.unsqueeze(-1).expand(-1, -1, self.user_embedding_dim),
+            0,
+            inv_idcs.unsqueeze(-1).expand(-1, self.user_embedding_dim),
             ui_embed,
         )
-        u_embed = u_emb_sum / counts_padded[..., None]
+        u_embed = u_emb_sum / counts[..., None]
 
         # Step 4: Combine embeddings
         xtu_embed = torch.cat([xt_embed, u_embed], dim=-1)
         xtu_embed = self.dropout(xtu_embed)
 
-        return F.tanh(self.fc_xtu(xtu_embed)), n_unique
+        return F.tanh(self.fc_xtu(xtu_embed))  # shape = (n_unique, 2 *n_hidden)
 
 
-def history_attention(current, history, history_lens):
+def history_attention(current, history):
     # current.shape = (batch_size, 2*n_hidden)
-    # history.shape = (batch_size, n_unique_max, 2*n_hidden)
-    # history_lens.shape = (batch_size,)
+    # history.shape = ( n_unique, 2*n_hidden)
 
-    batch_size, n_unique_max, n_hidden = history.shape
+    n_unique, n_hidden = history.shape
 
     # Compute logits using batch matrix multiplication
-    logits = torch.einsum("ij,itj->it", current, history) / torch.sqrt(
-        torch.tensor(n_hidden, dtype=torch.float32)
-    )
-
-    # Create a mask based on history_lens
-    mask = torch.arange(n_unique_max, device=history_lens.device).unsqueeze(
-        0
-    ) >= history_lens.unsqueeze(1)
-
-    # Apply mask by setting invalid positions to -inf
-    logits.masked_fill_(mask, float("-inf"))
+    logits = torch.einsum("ij,tj->it", current, history) / math.sqrt(n_hidden)
+    # logits.shape = (batch_size, n_unique)
 
     # Compute attention weights using softmax
     attn = torch.softmax(logits, dim=-1)
@@ -227,16 +202,25 @@ class DeepTUL(nn.Module):
         self,
         xc: List[torch.Tensor],
         tc: List[torch.Tensor],
-        xh: List[List[torch.Tensor]],
-        th: List[List[torch.Tensor]],
-        uh: List[List[int]],
+        xh: List[torch.Tensor],
+        th: List[torch.Tensor],
+        uh: torch.Tensor,
     ):
         c_enc = self.c_encoder(xc, tc)
-        h_enc, h_lens = self.h_encoder(xh, th, uh)
-        hc_attn = history_attention(c_enc, h_enc, h_lens)
+
+        xh_cat = torch.cat(xh)
+        th_cat = torch.cat(th)
+        uh_repeat = uh.repeat_interleave(torch.tensor([len(xhi) for xhi in xh]))
+        h_enc = self.h_encoder(xh_cat, th_cat, uh_repeat)
+        hc_attn = history_attention(c_enc, h_enc)
+
+        # c_enc.shape = (batch_size, 2 * n_hidden)
+        # h_attn.shape = (batch_size, n_xt_unique)
+        # h_enc.shape = (n_xt_unique, 2 * n_hidden)
 
         # Return the weighted sum of history with attention applied
-        h_context = torch.einsum("it,itj->ij", hc_attn, h_enc)
+        h_context = torch.einsum("it,tj->ij", hc_attn, h_enc)
+        # h_context.shape = (batch_size, 2 * n_hidden)
 
         return self.clf(torch.cat([c_enc, h_context], dim=-1))
 
@@ -245,20 +229,13 @@ class DeepTUL(nn.Module):
         xc: List[torch.Tensor],
         tc: List[torch.Tensor],
         uc: torch.Tensor,
-        xh: List[List[torch.Tensor]],
-        th: List[List[torch.Tensor]],
-        uh: List[torch.Tensor],
+        xh: List[torch.Tensor],
+        th: List[torch.Tensor],
+        uh: torch.Tensor,
         **kwargs
     ):
-        xh_cat, th_cat, uh_cat = [], [], []
-        for xhi, thi, uhi in zip(xh, th, uh):
-            xh_cat.append(torch.cat(xhi))
-            th_cat.append(torch.cat(thi))
-            uh_cat.append(
-                uhi.repeat_interleave(torch.tensor([len(xhij) for xhij in xhi]))
-            )
 
-        preds = self(xc, tc, xh_cat, th_cat, uh_cat)
+        preds = self(xc, tc, xh, th, uh)
         loss = F.cross_entropy(preds, uc.to(self.device))
         return loss
 
