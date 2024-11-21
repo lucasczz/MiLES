@@ -35,7 +35,6 @@ def split_trajectories(df, max_hours, group_cols=["user"]):
                 start_time = current_time
 
             sub_trajectory_ids.append(sub_trajectory_index)
-
         # Append results to main list
         sub_trajectories.extend(sub_trajectory_ids)
         t_idx_values.extend([f"{user_id}_{sub_id}" for sub_id in sub_trajectory_ids])
@@ -84,11 +83,11 @@ def get_hex_quantization(df, n_rows, remove_hex_duplicates=False):
 
 def get_time_features(df):
     print("Assigning time labels...")
-    df["weekday"] = df["datetime"].dt.day_of_week
-    df["is_workday"] = (df["weekday"] < 5).astype(int)
+    df["weekday"] = df["datetime"].dt.day_of_week + 1
+    df["is_workday"] = (df["weekday"] < 5).astype(int) + 1
 
     df["timestamp"] = (df["datetime"] - df["datetime"].min()).astype("int64") // 1e9
-    df["hour"] = df["datetime"].dt.hour
+    df["hour"] = df["datetime"].dt.hour + 1
     return df
 
 
@@ -175,6 +174,15 @@ if __name__ == "__main__":
         df["datetime"] = df["datetime"].dt.tz_convert(tz)
         df = df.sort_values(by=["user", "datetime"])
         df = split_trajectories(df, max_hours)
+
+        # Step 1: Calculate the minimum datetime per group
+        min_datetime_per_group = df.groupby("t_idx")["datetime"].first()
+
+        # Step 2: Sort the groups by their minimum datetime
+        sorted_groups = min_datetime_per_group.sort_values().index
+
+        # Step 3: Reorder the original dataframe
+        df = df.set_index("t_idx").loc[sorted_groups].reset_index()
         for n_users_i in n_users:
             top_users = df.groupby("user").size().nlargest(n_users_i).index
             df_top_users = df[df["user"].isin(top_users)]
@@ -206,6 +214,7 @@ if __name__ == "__main__":
     for n_users_i in n_users:
         top_users = df.groupby("user").size().nlargest(n_users_i).index
         df_top_users = df[df["user"].isin(top_users)]
+        df_top_users['user'] = df_top_users.groupby('user').ngroup()
         df_top_users = get_hex_quantization(df_top_users, n_rows=n_rows)
         df_top_users = get_time_features(df_top_users)
         print("Saving dataset...")

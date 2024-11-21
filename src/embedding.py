@@ -39,7 +39,7 @@ class RotaryEmbedding(nn.Module):
         super().__init__()
         self.loc_embedding = nn.ModuleList(
             [
-                nn.Embedding(num_embeddings=n + 1, embedding_dim=embedding_dim_loc)
+                nn.Embedding(num_embeddings=n, embedding_dim=embedding_dim_loc)
                 for n in num_embeddings_loc
             ]
         )
@@ -68,24 +68,22 @@ class LookupEmbedding(nn.Module):
     ):
         super().__init__()
         self.embedding_dim_loc = embedding_dim_loc
-        self.embedding_dim_time = (
-            embedding_dim_time if embedding_dim_time else embedding_dim_loc // 4
-        )
+
         self.loc_embedding = nn.ModuleList(
             [
-                nn.Embedding(num_embeddings=n + 1, embedding_dim=embedding_dim_loc)
+                nn.Embedding(num_embeddings=n, embedding_dim=embedding_dim_loc)
                 for n in num_embeddings_loc
             ]
         )
         self.time_embedding = nn.ModuleList(
             [
-                nn.Embedding(
-                    num_embeddings=n + 1, embedding_dim=self.embedding_dim_time
-                )
+                nn.Embedding(num_embeddings=n, embedding_dim=embedding_dim_time)
                 for n in num_embeddings_time
             ]
         )
-        self.dim = self.embedding_dim_time + embedding_dim_loc
+        self.dim = (
+            embedding_dim_time * (len(num_embeddings_time) > 0) + embedding_dim_loc
+        )
 
     def forward(self, x: torch.Tensor, t: torch.Tensor):
         # x.shape = (batch_size, max_seq_length, n_loc_features)
@@ -132,15 +130,13 @@ class CosineEmbedding(nn.Module):
             self.ts_embedding.bias.fill_(0)
         self.loc_embedding = nn.ModuleList(
             [
-                nn.Embedding(num_embeddings=n + 1, embedding_dim=embedding_dim_loc)
+                nn.Embedding(num_embeddings=n, embedding_dim=embedding_dim_loc)
                 for n in num_embeddings_loc
             ]
         )
         self.time_embedding = nn.ModuleList(
             [
-                nn.Embedding(
-                    num_embeddings=n + 1, embedding_dim=self.embedding_dim_time
-                )
+                nn.Embedding(num_embeddings=n, embedding_dim=self.embedding_dim_time)
                 for n in num_embeddings_time
             ]
         )

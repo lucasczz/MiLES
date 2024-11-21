@@ -87,6 +87,20 @@ class T3S(nn.Module):
         loss = F.cross_entropy(preds, uc.to(self.device))
         return loss
 
+    def pred_step(
+        self,
+        xc: List[torch.Tensor],
+        tc: List[torch.Tensor],
+        llc: List[torch.Tensor],
+        **kwargs
+    ):
+        seq_lengths = torch.tensor([len(xci) for xci in xc])
+        xc_padded = pad_sequence(xc, batch_first=True).to(self.device)
+        tc_padded = pad_sequence(tc, batch_first=True).to(self.device)
+        llc_padded = pad_sequence(llc, batch_first=True).to(self.device)
+        logits = self(xc_padded, tc_padded, llc_padded, seq_lengths)
+        return logits
+
 
 class PositionalEmbedding(nn.Module):
     def __init__(self, d_model: int, dropout: float = 0.1, max_len: int = 5000):

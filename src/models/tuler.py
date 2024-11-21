@@ -20,7 +20,7 @@ class TULER(nn.Module):
         embedding_type: str = "lookup",
         loc_embedding_dim: int = 16,
         time_embedding_dim: int = 8,
-        hidden_size: int = 256,
+        n_hidden: int = 256,
         n_layers: int = 3,
         bidirectional: bool = True,
         dropout: float = 0,
@@ -31,7 +31,7 @@ class TULER(nn.Module):
         super().__init__()
         self.n_locs = n_locs
         self.n_users = n_users
-        self.hidden_size = hidden_size
+        self.n_hidden = n_hidden
         self.n_layers = n_layers
 
         self.dropout = nn.Dropout(dropout)
@@ -49,8 +49,8 @@ class TULER(nn.Module):
 
         if rnn_type == "GRU":
             self.encoder = nn.GRU(
-                input_size=loc_embedding_dim,
-                hidden_size=hidden_size,
+                input_size=self.embedding.dim,
+                hidden_size=n_hidden,
                 num_layers=n_layers,
                 batch_first=True,
                 bidirectional=bidirectional,
@@ -58,14 +58,14 @@ class TULER(nn.Module):
             )
         else:
             self.encoder = nn.LSTM(
-                input_size=loc_embedding_dim,
-                hidden_size=hidden_size,
+                input_size=self.embedding.dim,
+                hidden_size=n_hidden,
                 num_layers=n_layers,
                 batch_first=True,
                 bidirectional=bidirectional,
                 dropout=dropout,
             )
-        self.fc_clf = nn.Linear(self.n_dirs * hidden_size, self.n_users)
+        self.fc_clf = nn.Linear(self.n_dirs * n_hidden, self.n_users)
 
     def forward(self, x: torch.Tensor, t: torch.Tensor):
         # Embedding lookups
@@ -96,10 +96,11 @@ class TULER(nn.Module):
         loss = F.cross_entropy(preds, uc.to(self.device))
         return loss
 
-    def pred_step(self, xc: List[torch.Tensor], uc: torch.Tensor, **kwargs):
+    def pred_step(self, xc: List[torch.Tensor], tc: List[torch.Tensor], **kwargs):
         xc_padded = pad_sequence(xc, batch_first=True).to(self.device)
-        preds = self(xc_padded)
-        return preds
+        tc_padded = pad_sequence(tc, batch_first=True).to(self.device)
+        logits = self(xc_padded, tc_padded)
+        return logits
 
 
 class BiTULER(TULER):
@@ -111,7 +112,7 @@ class BiTULER(TULER):
         embedding_type: str = "lookup",
         loc_embedding_dim: int = 16,
         time_embedding_dim: int = 8,
-        hidden_size=256,
+        n_hidden=256,
         n_layers=3,
         dropout=0,
         rnn_type="LSTM",
@@ -124,7 +125,7 @@ class BiTULER(TULER):
             embedding_type=embedding_type,
             loc_embedding_dim=loc_embedding_dim,
             time_embedding_dim=time_embedding_dim,
-            hidden_size=hidden_size,
+            n_hidden=n_hidden,
             n_layers=n_layers,
             dropout=dropout,
             rnn_type=rnn_type,
@@ -142,7 +143,7 @@ class TULERG(TULER):
         embedding_type: str = "lookup",
         loc_embedding_dim: int = 16,
         time_embedding_dim: int = 8,
-        hidden_size=256,
+        n_hidden=256,
         n_layers=3,
         dropout=0,
         device="cuda:0",
@@ -154,7 +155,7 @@ class TULERG(TULER):
             embedding_type=embedding_type,
             loc_embedding_dim=loc_embedding_dim,
             time_embedding_dim=time_embedding_dim,
-            hidden_size=hidden_size,
+            n_hidden=n_hidden,
             n_layers=n_layers,
             dropout=dropout,
             rnn_type="GRU",
@@ -172,7 +173,7 @@ class TULERL(TULER):
         embedding_type: str = "lookup",
         loc_embedding_dim: int = 16,
         time_embedding_dim: int = 8,
-        hidden_size=256,
+        n_hidden=256,
         n_layers=3,
         dropout=0,
         device="cuda:0",
@@ -184,7 +185,7 @@ class TULERL(TULER):
             embedding_type=embedding_type,
             loc_embedding_dim=loc_embedding_dim,
             time_embedding_dim=time_embedding_dim,
-            hidden_size=hidden_size,
+            n_hidden=n_hidden,
             n_layers=n_layers,
             dropout=dropout,
             rnn_type="LSTM",

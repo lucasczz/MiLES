@@ -61,6 +61,16 @@ class LSTMEncoder(nn.Module):
         self.n_times = n_times
         self.n_dirs = 1 + bidirectional
         self.n_hidden = n_hidden
+        self.embedding = EMBEDDING_TYPES[embedding_type](
+            num_embeddings_loc=n_locs,
+            embedding_dim_loc=loc_embedding_dim,
+            num_embeddings_time=n_times,
+            embedding_dim_time=time_embedding_dim,
+        )
+        self.fc_embedding = nn.Linear(
+            in_features=self.embedding.dim,
+            out_features=loc_embedding_dim,
+        )
         self.lstm = nn.LSTM(
             input_size=loc_embedding_dim,
             hidden_size=n_hidden,
@@ -68,17 +78,8 @@ class LSTMEncoder(nn.Module):
             bidirectional=bidirectional,
             batch_first=True,
         )
-        self.embedding = EMBEDDING_TYPES[embedding_type](
-            num_embeddings_loc=n_locs,
-            embedding_dim_loc=loc_embedding_dim,
-            num_embeddings_time=n_times,
-            embedding_dim_time=time_embedding_dim,
-        )
         self.dropout = nn.Dropout(dropout)
-        self.fc_embedding = nn.Linear(
-            in_features=self.embedding.dim,
-            out_features=loc_embedding_dim,
-        )
+
         self.fc_out = nn.Linear(n_hidden, n_users)
 
     def forward(
@@ -154,13 +155,13 @@ class MainTUL(nn.Module):
         n_times: int = 24,
         n_hidden: int = 1024,
         embedding_type: str = "lookup",
-        embedding_dim: int = 512,
-        beta: float = 10,
-        dis_temp: float = 10,
+        loc_embedding_dim: int = 512,
+        time_embedding_dim: int = 128,
+        lambduh: float = 10,
+        distill_temp: float = 10,
         dropout: float = 0.1,
         n_heads: int = 8,
-        n_layers_teacher: int = 3,
-        n_layers_student: int = 3,
+        n_layers: int = 3,
         bidirectional: bool = False,
         augment_strategy: Literal["recent", "random"] = "random",
         n_augment: int = 16,
@@ -170,10 +171,10 @@ class MainTUL(nn.Module):
         self.n_locs = n_locs
         self.n_times = n_times
         self.n_users = n_users
-        self.dis_temp = dis_temp
-        self.embedding_dim = embedding_dim
+        self.distill_temp = distill_temp
+        self.embedding_dim = loc_embedding_dim
         self.device = device
-        self.beta = beta
+        self.lambduh = lambduh
         self.n_augment = n_augment
         self.augment_strategy = augment_strategy
 
@@ -181,10 +182,11 @@ class MainTUL(nn.Module):
             n_locs=n_locs,
             n_times=n_times,
             n_users=n_users,
-            n_layers=n_layers_student,
+            n_layers=n_layers,
             n_hidden=n_hidden,
             embedding_type=embedding_type,
-            loc_embedding_dim=embedding_dim,
+            loc_embedding_dim=loc_embedding_dim,
+            time_embedding_dim=time_embedding_dim,
             dropout=dropout,
             bidirectional=bidirectional,
         )
@@ -193,9 +195,10 @@ class MainTUL(nn.Module):
             n_times=n_times,
             n_users=n_users,
             n_hidden=n_hidden,
-            n_layers=n_layers_teacher,
+            n_layers=n_layers,
             n_heads=n_heads,
-            loc_embedding_dim=embedding_dim,
+            loc_embedding_dim=loc_embedding_dim,
+            time_embedding_dim=time_embedding_dim,
             dropout=dropout,
         )
 
@@ -242,9 +245,9 @@ class MainTUL(nn.Module):
         xc: List[torch.Tensor],
         tc: List[torch.Tensor],
         uc: torch.Tensor,
-        xh: List[torch.Tensor],
-        th: List[torch.Tensor],
-        uh: torch.Tensor,
+        xh: List[torch.Tensor] = [],
+        th: List[torch.Tensor] = [],
+        uh: torch.Tensor = torch.empty(0),
         **kwargs
     ):
         # uh.shape = [(n_sequences, ) for _ in range(batch_size)]
@@ -252,7 +255,10 @@ class MainTUL(nn.Module):
         xc_padded = pad_sequence(xc, batch_first=True).to(self.device)
         tc_padded = pad_sequence(tc, batch_first=True).to(self.device)
 
-        xh_user, th_user = self.augment_trajectory(xc, tc, uc, xh, th, uh)
+        if len(uh) < 1:
+            xh_user, th_user = self.augment_trajectory(xc, tc, uc, xh, th, uh)
+        else:
+            xh_user, th_user = xc, tc
         lengths_h = torch.tensor([len(xhi) for xhi in xh_user])
         # Pad the subsampled trajectories
         xh_padded = pad_sequence([x for x in xh_user], batch_first=True).to(self.device)
@@ -271,16 +277,23 @@ class MainTUL(nn.Module):
         ce_loss_teacher1 = F.cross_entropy(out_teacher1, uc)
         ce_loss_teacher2 = F.cross_entropy(out_teacher2, uc)
 
-        loss_dis1 = compute_loss_dis(out_student1, out_teacher1, self.dis_temp)
-        loss_dis2 = compute_loss_dis(out_student2, out_teacher2, self.dis_temp)
+        loss_dis1 = compute_loss_dis(out_student1, out_teacher1, self.distill_temp)
+        loss_dis2 = compute_loss_dis(out_student2, out_teacher2, self.distill_temp)
         loss = (
             ce_loss_student1
             + ce_loss_student2
             + ce_loss_teacher1
             + ce_loss_teacher2
-            + self.beta * (loss_dis1 + loss_dis2)
+            + self.lambduh * (loss_dis1 + loss_dis2)
         )
         return loss
+
+    def pred_step(self, xc: List[torch.Tensor], tc: List[torch.Tensor], **kwargs):
+        lengths_c = torch.tensor([len(xci) for xci in xc])
+        xc_padded = pad_sequence(xc, batch_first=True).to(self.device)
+        tc_padded = pad_sequence(tc, batch_first=True).to(self.device)
+        logits = self.student(xc_padded, tc_padded, lengths_c)
+        return logits
 
 
 def compute_loss_dis(student_output, teacher_output, temperature):

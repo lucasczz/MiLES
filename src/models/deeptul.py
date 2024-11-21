@@ -202,25 +202,27 @@ class DeepTUL(nn.Module):
         self,
         xc: List[torch.Tensor],
         tc: List[torch.Tensor],
-        xh: List[torch.Tensor],
-        th: List[torch.Tensor],
-        uh: torch.Tensor,
+        xh: List[torch.Tensor] = [],
+        th: List[torch.Tensor] = [],
+        uh: torch.Tensor = torch.empty(0),
     ):
         c_enc = self.c_encoder(xc, tc)
+        if len(uh) > 0:
+            xh_cat = torch.cat(xh)
+            th_cat = torch.cat(th)
+            uh_repeat = uh.repeat_interleave(torch.tensor([len(xhi) for xhi in xh]))
+            h_enc = self.h_encoder(xh_cat, th_cat, uh_repeat)
+            hc_attn = history_attention(c_enc, h_enc)
 
-        xh_cat = torch.cat(xh)
-        th_cat = torch.cat(th)
-        uh_repeat = uh.repeat_interleave(torch.tensor([len(xhi) for xhi in xh]))
-        h_enc = self.h_encoder(xh_cat, th_cat, uh_repeat)
-        hc_attn = history_attention(c_enc, h_enc)
+            # c_enc.shape = (batch_size, 2 * n_hidden)
+            # h_attn.shape = (batch_size, n_xt_unique)
+            # h_enc.shape = (n_xt_unique, 2 * n_hidden)
 
-        # c_enc.shape = (batch_size, 2 * n_hidden)
-        # h_attn.shape = (batch_size, n_xt_unique)
-        # h_enc.shape = (n_xt_unique, 2 * n_hidden)
-
-        # Return the weighted sum of history with attention applied
-        h_context = torch.einsum("it,tj->ij", hc_attn, h_enc)
-        # h_context.shape = (batch_size, 2 * n_hidden)
+            # Return the weighted sum of history with attention applied
+            h_context = torch.einsum("it,tj->ij", hc_attn, h_enc)
+            # h_context.shape = (batch_size, 2 * n_hidden)
+        else:
+            h_context = torch.zeros_like(c_enc)
 
         return self.clf(torch.cat([c_enc, h_context], dim=-1))
 
@@ -249,4 +251,5 @@ class DeepTUL(nn.Module):
         **kwargs
     ):
 
-        return self(xc, tc, xh, th, uh)
+        logits = self(xc, tc, xh, th, uh)
+        return logits
