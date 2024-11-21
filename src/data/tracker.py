@@ -3,17 +3,52 @@ from pathlib import Path
 import time
 from typing import Callable, Dict, List
 
+from sklearn.metrics import (
+    f1_score,
+    recall_score,
+    precision_score,
+    top_k_accuracy_score,
+)
 import numpy as np
-import torch
+
+
+def top_1_accuracy(label, logits, classes):
+    return top_k_accuracy_score(label, logits, k=1, labels=classes)
+
+
+def top_5_accuracy(label, logits, classes):
+    return top_k_accuracy_score(label, logits, k=5, labels=classes)
+
+
+def macro_f1(labels, logits, classes):
+    return f1_score(
+        labels, logits.argmax(-1), average="macro", labels=classes, zero_division=np.nan
+    )
+
+
+def macro_recall(labels, logits, classes):
+    return recall_score(
+        labels, logits.argmax(-1), average="macro", labels=classes, zero_division=np.nan
+    )
+
+
+def macro_precision(labels, logits, classes):
+    return precision_score(
+        labels, logits.argmax(-1), average="macro", labels=classes, zero_division=np.nan
+    )
+
+
+METRICS = [macro_f1, macro_precision, macro_recall, top_1_accuracy, top_5_accuracy]
 
 
 class ExperimentTracker:
     def __init__(
         self,
-        metric_fns: List[Callable],
-        parameters: Dict,
         save_path: str,
-        logging_interval: int = 100,
+        metric_fns: List[Callable] = METRICS,
+        parameters: Dict = {},
+        logging_interval: int = 128,
+        n_classes: int = 400,
     ) -> None:
         self.metric_fns = metric_fns
         self.parameters = parameters
@@ -27,16 +62,17 @@ class ExperimentTracker:
         self.labels = []
         self.preds = []
         self.last_time = time.time()
+        self.classes = np.arange(n_classes)
 
     def update(self, y, y_pred, loss):
         # Log loss
         self.tmp_variables["loss"].append(loss.item())
 
         # Log predictions and labels
-        self.labels.append(y.detach().numpy())
-        self.preds.append(y_pred.detach().numpy())
+        self.labels.append(y.numpy(force=True))
+        self.preds.append(y_pred.numpy(force=True))
 
-        self.step += 1
+        self.step += len(y)
         # Calculate metrics and save average of values tracked since last logging step
         if self.step % self.logging_interval == 0:
             self.log_step()
@@ -48,9 +84,9 @@ class ExperimentTracker:
         self.preds = np.concatenate(self.preds)
         self.labels = np.concatenate(self.labels)
 
-        # Calculate metrics based on predictions and labels captured since last loggin step
+        # Calculate metrics based on predictions and labels captured since last logging step
         for metric in self.metric_fns:
-            results[metric.__name__] = metric(self.labels, self.preds)
+            results[metric.__name__] = metric(self.labels, self.preds, self.classes)
         self.labels = []
         self.preds = []
 
