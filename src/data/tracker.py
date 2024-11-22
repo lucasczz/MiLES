@@ -20,22 +20,8 @@ def top_5_accuracy(label, logits, classes):
     return top_k_accuracy_score(label, logits, k=5, labels=classes)
 
 
-def macro_f1(labels, logits, classes):
-    return f1_score(
-        labels, logits.argmax(-1), average="macro", labels=classes, zero_division=np.nan
-    )
-
-
-def macro_recall(labels, logits, classes):
-    return recall_score(
-        labels, logits.argmax(-1), average="macro", labels=classes, zero_division=np.nan
-    )
-
-
-def macro_precision(labels, logits, classes):
-    return precision_score(
-        labels, logits.argmax(-1), average="macro", labels=classes, zero_division=np.nan
-    )
+def pred(labels, logits, classes):
+    return 
 
 
 METRICS = [macro_f1, macro_precision, macro_recall, top_1_accuracy, top_5_accuracy]
@@ -78,25 +64,26 @@ class ExperimentTracker:
             self.log_step()
 
     def log_step(self):
-        results = {k: v for k, v in self.parameters.items()}
-        results["step"] = self.step
-        results["runtime"] = time.time() - self.last_time
-        self.preds = np.concatenate(self.preds)
-        self.labels = np.concatenate(self.labels)
+        if len(self.preds) > 0:
+            results = {k: v for k, v in self.parameters.items()}
+            results["step"] = self.step
+            results["runtime"] = time.time() - self.last_time
+            self.preds = np.concatenate(self.preds)
+            self.labels = np.concatenate(self.labels)
 
-        # Calculate metrics based on predictions and labels captured since last logging step
-        for metric in self.metric_fns:
-            results[metric.__name__] = metric(self.labels, self.preds, self.classes)
-        self.labels = []
-        self.preds = []
+            # Calculate metrics based on predictions and labels captured since last logging step
+            for metric in self.metric_fns:
+                results[metric.__name__] = metric(self.labels, self.preds, self.classes)
+            self.labels = []
+            self.preds = []
 
-        # Calculate mean of variables
-        for var_name, values in self.tmp_variables.items():
-            results[var_name] = np.mean(values)
-            self.tmp_variables[var_name] = []
+            # Calculate mean of variables
+            for var_name, values in self.tmp_variables.items():
+                results[var_name] = np.mean(values)
+                self.tmp_variables[var_name] = []
 
-        self._write_step(results)
-        self.last_time = time.time()
+            self._write_step(results)
+            self.last_time = time.time()
 
     def _write_step(self, results):
         # Check if file to write to has a .csv header already

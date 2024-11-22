@@ -14,7 +14,7 @@ class Rotary(nn.Module):
     def forward(self, t: torch.Tensor):
         freqs = torch.einsum("ij,k->ijk", t, self.inv_freq)
         emb = torch.cat((freqs, freqs), dim=-1).to(t.device)
-        return emb.cos()[None, ...], emb.sin()[None, ...]
+        return emb.cos(), emb.sin()
 
 
 def rotate_half(x):
@@ -43,8 +43,16 @@ class RotaryEmbedding(nn.Module):
                 for n in num_embeddings_loc
             ]
         )
-        self.time_embedding = Rotary(embedding_dim_loc, rotary_base)
-        self.dim = embedding_dim_loc
+        self.time_embedding = nn.ModuleList(
+            [
+                nn.Embedding(num_embeddings=n, embedding_dim=embedding_dim_time)
+                for n in num_embeddings_time
+            ]
+        )
+        self.ts_embedding = Rotary(embedding_dim_loc, rotary_base)
+        self.dim = (
+            embedding_dim_time * (len(num_embeddings_time) > 0) + embedding_dim_loc
+        )
 
     def forward(self, x: torch.Tensor, t: torch.Tensor):
         x_embedded = torch.stack(
@@ -53,9 +61,18 @@ class RotaryEmbedding(nn.Module):
                 for level, embedding in enumerate(self.loc_embedding)
             ]
         ).sum(0)
-        cos, sin = self.time_embedding(t[..., -1])
+        cos, sin = self.ts_embedding(t[..., -1])
         x_embedded = apply_rotary_pos_emb(x_embedded, cos, sin)
-        return x_embedded
+        if self.time_embedding:
+            t_embedded = torch.stack(
+                [
+                    embedding(t[..., level])
+                    for level, embedding in enumerate(self.time_embedding)
+                ]
+            ).sum(0)
+            return torch.cat([x_embedded, t_embedded], dim=-1)
+        else:
+            return x_embedded
 
 
 class LookupEmbedding(nn.Module):

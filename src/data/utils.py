@@ -1,4 +1,4 @@
-from typing import List, Tuple
+from typing import List, Optional, Tuple
 import torch
 from torch.utils.data import Dataset, DataLoader
 from pathlib import Path
@@ -10,12 +10,10 @@ BASEPATH = Path(__file__).parent.parent.parent
 
 def get_dataloader(
     dataset: str,
-    loc_levels: List[int],
-    time_levels: List[int],
     n_users: int,
     batch_size: int,
     device: torch.device,
-    debug: bool = False,
+    subsample: Optional[int] = None,
 ):
     def collate_fn(batch):
         x = [torch.tensor(row[0]).int().to(device) for row in batch]
@@ -29,9 +27,7 @@ def get_dataloader(
     trajectories, n_locs, n_times = load_trajectories(
         dataset,
         n_users,
-        loc_levels=loc_levels,
-        time_levels=time_levels,
-        subsample=10000 if debug else None,
+        subsample=subsample,
     )
     dataloader = DataLoader(
         TrajectoryDataset(trajectories),
@@ -42,11 +38,9 @@ def get_dataloader(
     return dataloader, n_locs, n_times
 
 
-def load_trajectories(
-    dataset: str, n_users: int, loc_levels: int, time_levels: int, subsample: int = None
-):
-    t_features = ["hour", "weekday", "is_workday"][:time_levels] + ["timestamp"]
-    x_features = [f"cell{i}" for i in range(loc_levels)]
+def load_trajectories(dataset: str, n_users: int, subsample: int = None):
+    t_features = ["hour", "weekday", "is_workday", "timestamp"]
+    x_features = [f"cell{i}" for i in range(4)]
 
     # load and preprocess the data
     df = pd.read_csv(
@@ -55,14 +49,12 @@ def load_trajectories(
     if dataset.startswith("foursquare"):
         df["point"] = df.groupby("venueId").ngroup() + 1
         x_features = ["point"] + x_features
-    if subsample:
-        df = df.iloc[:subsample]
 
     df["timestamp"] = df["timestamp"] - df["timestamp"].min()
     df["lon"] = (df["lon"] - df["lon"].min()) / (df["lon"].max() - df["lon"].min())
     df["lat"] = (df["lat"] - df["lat"].min()) / (df["lat"].max() - df["lat"].min())
 
-    grouped = df.groupby("t_idx", sort=False)
+    grouped = list(df.groupby("t_idx", sort=False))[:subsample]
     data = [
         (
             group[x_features].values,

@@ -219,8 +219,7 @@ class TULVAE(nn.Module):
         n_locs: int,
         n_times: int,
         n_users: int,
-        n_hidden_ae: int = 300,
-        n_hidden_clf: int = 512,
+        n_hidden: int = 512,
         embedding_type: str = "lookup",
         loc_embedding_dim: int = 300,
         time_embedding_dim: int = 50,
@@ -245,21 +244,21 @@ class TULVAE(nn.Module):
         # Classifier components
         self.clf_lstm = nn.LSTM(
             loc_embedding_dim,
-            n_hidden_clf,
+            n_hidden,
             num_layers=n_layers,
             bidirectional=True,
             batch_first=True,
             dropout=dropout if n_layers > 1 else 0,
         )
         self.dropout = nn.Dropout(dropout)
-        self.clf_out = nn.Linear(self.n_dirs * n_hidden_clf, n_users)
+        self.clf_out = nn.Linear(self.n_dirs * n_hidden, n_users)
 
         # VAE component
         self.vae = HierarchicalVAE(
             n_locs=n_locs,
             n_times=n_times,
             n_users=n_users,
-            n_hidden=n_hidden_ae,
+            n_hidden=n_hidden,
             embedding_type=embedding_type,
             loc_embedding_dim=loc_embedding_dim,
             time_embedding_dim=time_embedding_dim,

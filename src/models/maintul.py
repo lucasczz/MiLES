@@ -157,7 +157,7 @@ class MainTUL(nn.Module):
         embedding_type: str = "lookup",
         loc_embedding_dim: int = 512,
         time_embedding_dim: int = 128,
-        lambduh: float = 10,
+        lambduh: float = 1,
         distill_temp: float = 10,
         dropout: float = 0.1,
         n_heads: int = 8,
