@@ -28,7 +28,6 @@ def search():
     n_layerss = [1, 2, 3]
     n_headss = [4, 8]
 
-
     # Generate all combinations of the parameters with multiple values
     param_combinations = list(
         itertools.product(
@@ -88,7 +87,7 @@ def search():
                 device=device,
                 log_path=log_path,
                 log_info=log_info,
-                verbose=False
+                verbose=False,
             )
         except:
             pass
@@ -102,7 +101,7 @@ def main():
     time_levels = 1
     batch_size = 1
     device = "cuda:0"
-    log_path = "maintul_full.csv"
+    log_path = "maintul_debug"
     optimizer_cls = Adam
     learning_rate = 4e-4
     model_params = dict(
@@ -120,7 +119,7 @@ def main():
 
     # Get the dataloader and other dataset-related information
     dataloader, n_locs, n_times = get_dataloader(
-        dataset, n_users, batch_size, device, subsample=None
+        dataset, n_users, batch_size, device, subsample=5_000
     )
 
     # Iterate over all combinations and run the model
@@ -150,4 +149,32 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    dataset = "foursquare_NYC"
+    n_users = 400
+    batch_size = 1
+    device = "cuda:0"
+
+    # Get the dataloader and other dataset-related information
+    dataloader, n_locs, n_times = get_dataloader(
+        dataset, n_users, batch_size, device, subsample=100
+    )
+
+    # Run the model with the current combination of parameters
+    run(
+        dataset_name="foursquare_NYC",
+        dataloader=dataloader,
+        model_cls=MainTUL,
+        n_users=400,
+        n_locs=n_locs,
+        n_times=n_times,
+        loc_levels=1,
+        time_levels=1,
+        optimizer_cls=Adam,
+        lr=1e-3,
+        n_hidden=128,
+        n_layers=1,
+        n_heads=8,
+        lambduh=2,
+        device=device,
+        log_path="test.jsonl",
+    )

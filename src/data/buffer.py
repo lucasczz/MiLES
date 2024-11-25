@@ -1,10 +1,10 @@
 import numpy as np
 from typing import Tuple, List, Optional
 
+
 def softmax(logits):
     exp_logits = np.exp(logits - np.max(logits))  # Stabilize softmax for numerical safety
     return exp_logits / exp_logits.sum()
-
 
 
 class ReplayBuffer:

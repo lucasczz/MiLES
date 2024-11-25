@@ -90,56 +90,31 @@ def search():
             pass
 
 
-def main():
-    model_cls = BiTULER
+if __name__ == "__main__":
     dataset = "foursquare_NYC"
     n_users = 400
-    loc_levels = 1
-    time_levels = 1
     batch_size = 1
-    device = "cpu"
-    log_path = "tuler_debug.csv"
-    optimizer_cls = Adam
-    learning_rate = 1e-2
-    model_params = dict(
-        n_hidden=64,
-        embedding_type="rotary",
-        loc_embedding_dim=64,
-        time_embedding_dim=8,
-        dropout=0.0,
-        n_layers=1,
-    )
+    device = "cuda:0"
 
     # Get the dataloader and other dataset-related information
     dataloader, n_locs, n_times = get_dataloader(
-        dataset, n_users, batch_size, device, subsample=True
+        dataset, n_users, batch_size, device, subsample=100
     )
 
-    # Iterate over all combinations and run the model
-    log_info = {
-        "dataset": dataset + f"_{n_users}",
-        "batch_size": batch_size,
-        "lr": learning_rate,
-        "model": model_cls.__name__,
-        "optimizer": optimizer_cls.__name__,
-        "loc_levels": loc_levels,
-        "time_levels": time_levels,
-    }
     # Run the model with the current combination of parameters
     run(
-        model_cls=model_cls,
-        n_users=n_users,
-        optimizer_cls=optimizer_cls,
-        learning_rate=learning_rate,
+        dataset_name="foursquare_NYC",
         dataloader=dataloader,
-        n_locs=n_locs[:loc_levels],
-        n_times=n_times[:loc_levels],
-        model_params=model_params,
+        model_cls=BiTULER,
+        n_users=400,
+        n_locs=n_locs,
+        n_times=n_times,
+        loc_levels=1,
+        time_levels=1,
+        optimizer_cls=Adam,
+        lr=1e-3,
+        n_hidden=128,
+        n_layers=1,
         device=device,
-        log_path=log_path,
-        log_info=log_info,
+        log_path="test.jsonl",
     )
-
-
-if __name__ == "__main__":
-    main()

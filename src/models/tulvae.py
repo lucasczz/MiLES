@@ -31,20 +31,20 @@ class HierarchicalVAE(nn.Module):
         self.n_hidden = n_hidden
         self.latent_dim = latent_dim
         self.n_dirs = 1 + bidirectional
+        self.start_loc = torch.tensor(n_locs)[None, :]
+        self.start_time = torch.tensor(n_times)[None, :]
         self.n_locs = [n_loc + 1 for n_loc in n_locs]
         self.n_times = [n_time + 1 for n_time in n_times]
         self.n_layers = n_layers
         self.n_users = n_users
         self.subseq_steps = subseq_steps
         self.dropout = nn.Dropout(dropout)
-        self.start_loc = torch.tensor(n_locs)[None, :]
-        self.start_time = torch.tensor(n_times)[None, :]
 
         # Embedding
         self.embedding = EMBEDDING_TYPES[embedding_type](
-            num_embeddings_loc=n_locs,
+            num_embeddings_loc=self.n_locs,
             embedding_dim_loc=loc_embedding_dim,
-            num_embeddings_time=n_times,
+            num_embeddings_time=self.n_times,
             embedding_dim_time=time_embedding_dim,
         )
 
@@ -85,7 +85,10 @@ class HierarchicalVAE(nn.Module):
         subseq_input, poi_hidden, poi_cell = self.encode_poi(
             loc_embedded, time_padded, seq_lengths
         )
-        subseq_hidden = self.encode_subseq(subseq_input)
+        if subseq_input is not None:
+            subseq_hidden = self.encode_subseq(subseq_input)
+        else:
+            subseq_hidden = torch.zeros_like(poi_hidden)
 
         # Get latent variable distribution
         poi_mu, poi_logvar = self.fc_mu_poi(poi_hidden), self.fc_logvar_poi(poi_hidden)
@@ -136,11 +139,12 @@ class HierarchicalVAE(nn.Module):
         return mu + eps * std
 
     def encode_subseq(self, subseq_input: torch.Tensor) -> torch.Tensor:
-        _, (hidden_states, _) = self.subseq_encoder_lstm(subseq_input)
-        hidden_states = rearrange(
-            hidden_states[-self.n_dirs :], "dir batch hidden -> batch (dir hidden)"
+
+        _, (h, _) = self.subseq_encoder_lstm(subseq_input)
+        h = rearrange(
+            h[-self.n_dirs :], "dir batch hidden -> batch (dir hidden)"
         )
-        return self.dropout(hidden_states)
+        return self.dropout(h)
 
     def encode_poi(
         self,
@@ -151,22 +155,24 @@ class HierarchicalVAE(nn.Module):
         loc_packed = pack_padded_sequence(
             loc_embedded, seq_lengths, batch_first=True, enforce_sorted=False
         )
-        packed_output, (hidden_states, cell_states) = self.poi_encoder_lstm(loc_packed)
+        packed_output, (h, c) = self.poi_encoder_lstm(loc_packed)
         unpacked_output, _ = pad_packed_sequence(packed_output, batch_first=True)
 
         batch_size, max_subseq_len, n_hidden = unpacked_output.shape
-        subseq_indices, subseq_lengths = self.get_subseq_indices(time_padded[..., 0])
+        subseq_idcs, subseq_lengths = self.get_subseq_indices(time_padded[..., 0])
         subseq_input = unpacked_output.gather(
-            1, subseq_indices.unsqueeze(-1).expand(-1, -1, n_hidden)
+            1, subseq_idcs.unsqueeze(-1).expand(-1, -1, n_hidden)
         )
-
-        subseq_input_packed = pack_padded_sequence(
-            subseq_input, subseq_lengths, batch_first=True, enforce_sorted=False
+        if subseq_input.nelement() > 0:
+            subseq_input_packed = pack_padded_sequence(
+                subseq_input, subseq_lengths, batch_first=True, enforce_sorted=False
+            )
+        else:
+            subseq_input_packed = None
+        h = rearrange(
+            h[-self.n_dirs :], "dir batch hidden -> batch (dir hidden)"
         )
-        hidden_states = rearrange(
-            hidden_states[-self.n_dirs :], "dir batch hidden -> batch (dir hidden)"
-        )
-        return subseq_input_packed, self.dropout(hidden_states), cell_states
+        return subseq_input_packed, self.dropout(h), c
 
     def get_subseq_indices(
         self, time_padded: torch.Tensor
@@ -240,19 +246,6 @@ class TULVAE(nn.Module):
         self.alpha = alpha
         self.beta = beta
 
-        self.n_dirs = 1 + bidirectional
-        # Classifier components
-        self.clf_lstm = nn.LSTM(
-            loc_embedding_dim,
-            n_hidden,
-            num_layers=n_layers,
-            bidirectional=True,
-            batch_first=True,
-            dropout=dropout if n_layers > 1 else 0,
-        )
-        self.dropout = nn.Dropout(dropout)
-        self.clf_out = nn.Linear(self.n_dirs * n_hidden, n_users)
-
         # VAE component
         self.vae = HierarchicalVAE(
             n_locs=n_locs,
@@ -271,6 +264,19 @@ class TULVAE(nn.Module):
         )
         # Shared embedding layer for locations
         self.embedding = self.vae.embedding
+
+        self.n_dirs = 1 + bidirectional
+        # Classifier components
+        self.clf_lstm = nn.LSTM(
+            self.embedding.dim,
+            n_hidden,
+            num_layers=n_layers,
+            bidirectional=True,
+            batch_first=True,
+            dropout=dropout if n_layers > 1 else 0,
+        )
+        self.dropout = nn.Dropout(dropout)
+        self.clf_out = nn.Linear(self.n_dirs * n_hidden, n_users)
 
     def forward(
         self,
@@ -345,7 +351,7 @@ class TULVAE(nn.Module):
         # loc_padded.shape = (batch_size, max_seq_len)
         # loc.shape = (batch_size, max_seq_len)
         clf_probas = torch.softmax(clf_logits, dim=-1)
-        rec_targets = x_padded[..., 0].unsqueeze(1).expand(-1, self.n_users, -1)
+        rec_targets = x_padded[..., 0].unsqueeze(1).expand(-1, self.n_users, -1).long()
         rec_losses = F.cross_entropy(
             rec_logits, rec_targets, ignore_index=0, reduction="none"
         )

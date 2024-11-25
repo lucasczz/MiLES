@@ -1,53 +1,168 @@
+from itertools import product
 from pathlib import Path
-from typing import Dict, List
+from typing import Dict, List, Optional
 import torch
 from tqdm import tqdm
+from torch.optim import Adam
 
-from src.data.tracker import ExperimentTracker
+from src.data.tracker import JSONTracker
+from src.data.utils import get_dataloader
 
 
-BASEPATH = Path(__file__).parent.parent
-LOGGING_INTERVAL = 100
+def get_config_grid(search_space=[{}], fixed_kwargs={}, **kwargs):
+    results = []
+    for row in search_space:
+        row.update(kwargs)
+        fixed_attributes = fixed_kwargs.copy()
+        variable_keys = []
+        variable_values = []
+        for key, value in row.items():
+            if isinstance(value, (tuple, list)):
+                variable_values.append(value)
+                variable_keys.append(key)
+            else:
+                fixed_attributes[key] = value
+        configs = [
+            fixed_attributes | dict(zip(variable_keys, prod_values))
+            for prod_values in product(*variable_values)
+        ]
+        results.extend(configs)
+    return results
+
+
+def grid_search(
+    dataset: str,
+    model_cls: torch.nn.Module,
+    n_users: int,
+    loc_levels: 1,
+    time_levels: 1,
+    optimizer_cls: torch.optim.Optimizer = Adam,
+    lr: float = 1e-3,
+    n_hidden: int = 128,
+    n_layers: int = 1,
+    embedding_type: str = "lookup",
+    loc_embedding_factor: float = 1.0,
+    time_embedding_factor: float = 0.25,
+    dropout: float = 0.0,
+    subsample: Optional[int] = None,
+    device: torch.device = "cuda:0",
+    log_path: str = "test.jsonl",
+    debug: bool = False,
+    **model_kwargs,
+):
+
+    batch_size = 1
+    configs = get_config_grid(
+        model_cls=model_cls,
+        loc_levels=loc_levels,
+        time_levels=time_levels,
+        optimizer_cls=optimizer_cls,
+        lr=lr,
+        n_hidden=n_hidden,
+        embedding_type=embedding_type,
+        loc_embedding_factor=loc_embedding_factor,
+        time_embedding_factor=time_embedding_factor,
+        dropout=dropout,
+        n_layers=n_layers,
+        **model_kwargs,
+    )
+    # Get the dataloader and other dataset-related information
+    dataloader, n_locs, n_times = get_dataloader(
+        dataset, n_users, batch_size, device, subsample
+    )
+    if debug:
+        configs = configs[:1]
+    # Iterate over all combinations and run the model
+    for config in tqdm(configs):
+        try:
+            # Run the model with the current combination of parameters
+            run(
+                dataset_name=dataset,
+                dataloader=dataloader,
+                n_locs=n_locs,
+                n_times=n_times,
+                n_users=n_users,
+                device=device,
+                log_path=log_path,
+                verbose=True,
+                **config,
+            )
+        except Exception as e:
+            print(e)
 
 
 def run(
+    dataset_name: str,
+    dataloader,
     model_cls: torch.nn.Module,
     n_users: int,
-    optimizer_cls: torch.optim.Optimizer,
-    learning_rate: float,
-    dataloader,
     n_locs: List[int],
     n_times: List[int],
-    model_params: dict,
-    device: torch.device,
-    log_info: Dict,
-    log_path: str,
+    loc_levels: int = 1,
+    time_levels: int = 1,
+    optimizer_cls: torch.optim.Optimizer = Adam,
+    lr: float = 1e-3,
+    n_hidden: int = 128,
+    n_layers: int = 1,
+    embedding_type: str = "lookup",
+    loc_embedding_factor: float = 1.0,
+    time_embedding_factor: float = 0.25,
+    dropout: float = 0.0,
+    device: torch.device = "cuda:0",
+    log_path: str = "test.jsonl",
     verbose: bool = True,
+    seed: int = 42,
+    **model_params: Dict,
 ):
-
+    torch.manual_seed(seed)
+    loc_embedding_dim = int(loc_embedding_factor * n_hidden)
+    time_embedding_dim = int(time_embedding_factor * loc_embedding_dim)
     model = model_cls(
-        n_locs=n_locs,
         n_users=n_users,
-        n_times=n_times,
+        n_locs=n_locs[:loc_levels],
+        n_times=n_times[:time_levels],
+        n_hidden=n_hidden,
+        n_layers=n_layers,
+        dropout=dropout,
+        embedding_type=embedding_type,
+        loc_embedding_dim=loc_embedding_dim,
+        time_embedding_dim=time_embedding_dim,
         device=device,
         **model_params,
     ).to(device)
+
     # model = torch.compile(model)
-    xh, th, llh, uh = [], [], [], torch.empty(0, device=device)
-    tracker = ExperimentTracker(
-        parameters=model_params | log_info,
-        logging_interval=LOGGING_INTERVAL,
-        save_path=BASEPATH.joinpath("reports", log_path),
+    xh, th, llh, uh = [], [], [], torch.empty(0, device=device, dtype=torch.int32)
+
+    optimizer = optimizer_cls(model.parameters(), lr=lr)
+
+    log_info = dict(
+        dataset=dataset_name,
+        n_users=n_users,
+        loc_levels=loc_levels,
+        time_levels=time_levels,
+        model_cls=model_cls.__name__,
+        optimizer_cls=optimizer_cls.__name__,
+        lr=lr,
+        n_hidden=n_hidden,
+        n_layers=n_layers,
+        embedding_type=embedding_type,
+        loc_embedding_factor=loc_embedding_factor,
+        time_embedding_factor=time_embedding_factor,
+        dropout=dropout,
+        **model_params,
     )
-    optimizer = optimizer_cls(model.parameters(), lr=learning_rate)
+    tracker = JSONTracker(save_path=log_path, parameters=log_info)
     if verbose:
-        iterator = tqdm(dataloader)
+        iterator = tqdm(dataloader, leave=False)
     else:
-        dataloader
+        iterator = dataloader
     for xc, tc, llc, uc in iterator:
 
         with torch.inference_mode():
-            preds = model.pred_step(xc=xc, tc=tc, llc=llc, xh=xh, th=th, llh=llh, uh=uh)
+            logits = model.pred_step(
+                xc=xc, tc=tc, llc=llc, xh=xh, th=th, llh=llh, uh=uh
+            )
 
         loss = model.train_step(
             xc=xc, tc=tc, llc=llc, uc=uc, xh=xh, th=th, llh=llh, uh=uh
@@ -55,11 +170,11 @@ def run(
         loss.backward()
         optimizer.step()
         optimizer.zero_grad()
-        tracker.update(uc, preds, loss)
 
-        xh.append(xc)
-        th.append(tc)
-        llh.append(llc)
+        tracker.update(logits, uc)
+
+        xh += xc
+        th += tc
+        llh += llc
         uh = torch.concat([uh, uc])
-
-    tracker.log_step()
+    tracker.save()

@@ -9,6 +9,32 @@ from einops import rearrange
 from src.embedding import EMBEDDING_TYPES
 
 
+def argunique(x: torch.Tensor, t: torch.Tensor):
+    hash = t[..., 0] * (x[..., 0].max() + 1) + x[..., 0]
+
+    # Sort the hash and obtain indices
+    sorted, idcs = hash.sort(dim=-1)
+
+    # Create a shifted version and a mask for unique values
+    sorted_shift = sorted.roll(1, 0)
+    mask = sorted_shift != sorted
+    mask[0] = True  # Ensure the first element is considered unique
+
+    # Get the indices of unique values
+    unique_idcs = idcs[mask]
+
+    # Calculate inverse indices
+    inv_idcs = torch.zeros_like(hash, dtype=torch.long)
+    inv_idcs[idcs] = torch.cumsum(mask, dim=0) - 1
+
+    # Calculate counts of each unique value
+    value_counts = torch.diff(
+        torch.nonzero(mask, as_tuple=False).squeeze(1),
+        append=torch.tensor([mask.shape[0]], device=mask.device),
+    )
+    return unique_idcs, inv_idcs, value_counts
+
+
 class CurrentEncoder(nn.Module):
     def __init__(
         self,
@@ -47,7 +73,7 @@ class CurrentEncoder(nn.Module):
         self.dropout = nn.Dropout(dropout)
 
     def forward(self, x: List[torch.Tensor], t: List[torch.Tensor]):
-        traj_lens = torch.tensor([len(xi) for xi in x])
+        traj_lens = torch.tensor([xi.shape[0] for xi in x])
         x_pad = pad_sequence(x, batch_first=True).to(self.device)
         t_pad = pad_sequence(t, batch_first=True).to(self.device)
         xt_embed = self.dropout(self.embedding(x_pad, t_pad))
@@ -104,21 +130,17 @@ class HistoryEncoder(nn.Module):
         # x.shape = (seq_len, n_features)
 
         # Step 1: Get unique combinations of location and time IDs
-        xt = torch.stack([x[..., 0], t[..., 0]], dim=-1)  # shape = (sum(seq_len), 2)
-        xt_unique, inv_idcs, counts = torch.unique(
-            xt, dim=0, return_inverse=True, return_counts=True
-        )
+        unique_idcs, inv_idcs, counts = argunique(x, t)
+        x_unique = x[unique_idcs].to(self.device)
+        t_unique = t[unique_idcs].to(self.device)
 
-        xt_unique = xt_unique.to(self.device)
         inv_idcs = inv_idcs.to(self.device)
         counts = counts.to(self.device)
 
-        n_unique = xt_unique.shape[0]
+        n_unique = x_unique.shape[0]
 
         # Step 2: Embed locations and times
-        xt_embed = self.dropout(
-            self.embedding(xt_unique[..., 0, None], xt_unique[..., 1, None])
-        )
+        xt_embed = self.dropout(self.embedding(x_unique, t_unique))
         ui_embed = self.dropout(self.user_embed(u.to(self.device)))
 
         # Step 3: Aggregate user embeddings for each unique (loc, time) pair
@@ -210,7 +232,9 @@ class DeepTUL(nn.Module):
         if len(uh) > 0:
             xh_cat = torch.cat(xh)
             th_cat = torch.cat(th)
-            uh_repeat = uh.repeat_interleave(torch.tensor([len(xhi) for xhi in xh]))
+            uh_repeat = uh.repeat_interleave(
+                torch.tensor([xhi.shape[0] for xhi in xh], device=uh.device)
+            )
             h_enc = self.h_encoder(xh_cat, th_cat, uh_repeat)
             hc_attn = history_attention(c_enc, h_enc)
 
