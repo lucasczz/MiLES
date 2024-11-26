@@ -1,9 +1,0 @@
-pandas 
-jupyter
-tqdm
-matplotlib
-numpy
-geopandas
--e .
-pytest
-einops
