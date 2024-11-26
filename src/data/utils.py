@@ -12,14 +12,13 @@ def get_dataloader(
     dataset: str,
     n_users: int,
     batch_size: int,
-    device: torch.device,
     subsample: Optional[int] = None,
 ):
     def collate_fn(batch):
-        x = [torch.tensor(row[0]).int().to(device) for row in batch]
-        t = [torch.tensor(row[1]).int().to(device) for row in batch]
-        ll = [torch.tensor(row[2]).float().to(device) for row in batch]
-        u = torch.tensor([row[3] for row in batch]).long().to(device)
+        x = [torch.tensor(row[0]).int() for row in batch]
+        t = [torch.tensor(row[1]).int() for row in batch]
+        ll = [torch.tensor(row[2]).float() for row in batch]
+        u = torch.tensor([row[3] for row in batch]).long()
         return x, t, ll, u
 
     # Create a dataset and dataloader

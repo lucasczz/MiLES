@@ -1,6 +1,5 @@
 from collections import deque
 from itertools import product
-from pathlib import Path
 from typing import Dict, List, Optional
 import torch
 from tqdm import tqdm
@@ -73,7 +72,7 @@ def grid_search(
     )
     # Get the dataloader and other dataset-related information
     dataloader, n_locs, n_times = get_dataloader(
-        dataset, n_users, batch_size, device, subsample
+        dataset, n_users, batch_size, subsample
     )
     if debug:
         configs = configs[2:5]
@@ -94,7 +93,6 @@ def grid_search(
             )
         except Exception as e:
             print(e)
-    
 
 
 def run(
@@ -138,7 +136,6 @@ def run(
         **model_params,
     ).to(device)
 
-    # model = torch.compile(model)
     xh, th, llh, uh = (
         deque([], maxlen=history_length),
         deque([], maxlen=history_length),
@@ -170,7 +167,7 @@ def run(
     else:
         iterator = dataloader
     for xc, tc, llc, uc in iterator:
-
+   
         with torch.inference_mode():
             model.eval()
             logits = model.pred_step(
@@ -189,5 +186,5 @@ def run(
         xh += xc
         th += tc
         llh += llc
-        uh = torch.cat([uh[-history_length + 1 :], uc])
+        uh = torch.cat([uh[-history_length + 1 :], uc.to(uh.device)])
     tracker.save()

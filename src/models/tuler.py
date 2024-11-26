@@ -1,7 +1,5 @@
-from functools import partial
 from typing import List, Literal
 from einops import rearrange
-from torchmetrics.functional import accuracy
 
 import torch
 import torch.nn as nn

@@ -217,6 +217,8 @@ class MainTUL(nn.Module):
 
     def augment_trajectory(self, xc, tc, uc, xh, th, uh):
         # Determine indices where uh matches uc
+        uc = uc.to(self.device)
+        uh = uh.to(self.device)
         mask = uc[:, None] == uh[None, :]
         idcs = [mask_i.nonzero().view(-1) for mask_i in mask]
 

@@ -8,7 +8,6 @@ from einops import rearrange
 
 from src.embedding import EMBEDDING_TYPES
 
-
 def argunique(x: torch.Tensor, t: torch.Tensor):
     hash = t[..., 0] * (x[..., 0].max() + 1) + x[..., 0]
 
