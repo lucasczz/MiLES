@@ -1,3 +1,4 @@
+from collections import deque
 from itertools import product
 from pathlib import Path
 from typing import Dict, List, Optional
@@ -9,7 +10,11 @@ from src.data.tracker import JSONTracker
 from src.data.utils import get_dataloader
 
 
-def get_config_grid(search_space=[{}], fixed_kwargs={}, **kwargs):
+def get_config_grid(search_space=None, fixed_kwargs=None, **kwargs):
+    if search_space is None:
+        search_space = [{}]
+    if fixed_kwargs is None:
+        fixed_kwargs = {}
     results = []
     for row in search_space:
         row.update(kwargs)
@@ -71,7 +76,7 @@ def grid_search(
         dataset, n_users, batch_size, device, subsample
     )
     if debug:
-        configs = configs[:1]
+        configs = configs[2:5]
     # Iterate over all combinations and run the model
     for config in tqdm(configs):
         try:
@@ -89,6 +94,7 @@ def grid_search(
             )
         except Exception as e:
             print(e)
+    
 
 
 def run(
@@ -112,6 +118,7 @@ def run(
     log_path: str = "test.jsonl",
     verbose: bool = True,
     seed: int = 42,
+    history_length: int = 1000,
     **model_params: Dict,
 ):
     torch.manual_seed(seed)
@@ -132,7 +139,12 @@ def run(
     ).to(device)
 
     # model = torch.compile(model)
-    xh, th, llh, uh = [], [], [], torch.empty(0, device=device, dtype=torch.int32)
+    xh, th, llh, uh = (
+        deque([], maxlen=history_length),
+        deque([], maxlen=history_length),
+        deque([], maxlen=history_length),
+        torch.empty(0, device=device, dtype=torch.int32),
+    )
 
     optimizer = optimizer_cls(model.parameters(), lr=lr)
 
@@ -160,12 +172,13 @@ def run(
     for xc, tc, llc, uc in iterator:
 
         with torch.inference_mode():
+            model.eval()
             logits = model.pred_step(
-                xc=xc, tc=tc, llc=llc, xh=xh, th=th, llh=llh, uh=uh
+                xc=xc, tc=tc, llc=llc, xh=list(xh), th=list(th), llh=list(llh), uh=uh
             )
-
+        model.train()
         loss = model.train_step(
-            xc=xc, tc=tc, llc=llc, uc=uc, xh=xh, th=th, llh=llh, uh=uh
+            xc=xc, tc=tc, llc=llc, uc=uc, xh=list(xh), th=list(th), llh=list(llh), uh=uh
         )
         loss.backward()
         optimizer.step()
@@ -176,5 +189,5 @@ def run(
         xh += xc
         th += tc
         llh += llc
-        uh = torch.concat([uh, uc])
+        uh = torch.cat([uh[-history_length + 1 :], uc])
     tracker.save()
