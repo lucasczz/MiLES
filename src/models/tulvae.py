@@ -115,7 +115,7 @@ class HierarchicalVAE(nn.Module):
         batch_size, max_seq_len, _ = loc_embedded.shape
         user_one_hot = (
             F.one_hot(user_id, self.n_users).unsqueeze(1).expand(-1, max_seq_len, -1)
-        )
+        ).to(self.device)
 
         loc_embed_shifted = torch.roll(loc_embedded, shifts=1, dims=1)
         loc_embed_shifted[:, 0] = self.embedding(
@@ -141,9 +141,7 @@ class HierarchicalVAE(nn.Module):
     def encode_subseq(self, subseq_input: torch.Tensor) -> torch.Tensor:
 
         _, (h, _) = self.subseq_encoder_lstm(subseq_input)
-        h = rearrange(
-            h[-self.n_dirs :], "dir batch hidden -> batch (dir hidden)"
-        )
+        h = rearrange(h[-self.n_dirs :], "dir batch hidden -> batch (dir hidden)")
         return self.dropout(h)
 
     def encode_poi(
@@ -169,9 +167,7 @@ class HierarchicalVAE(nn.Module):
             )
         else:
             subseq_input_packed = None
-        h = rearrange(
-            h[-self.n_dirs :], "dir batch hidden -> batch (dir hidden)"
-        )
+        h = rearrange(h[-self.n_dirs :], "dir batch hidden -> batch (dir hidden)")
         return subseq_input_packed, self.dropout(h), c
 
     def get_subseq_indices(
@@ -236,6 +232,7 @@ class TULVAE(nn.Module):
         alpha: float = 0.5,
         beta: float = 0.5,
         subseq_steps: int = 6,
+        monte_carlo_samples: int = 3,
         device: torch.device = "cuda:0",
     ):
         super().__init__()
@@ -245,6 +242,7 @@ class TULVAE(nn.Module):
         self.device = device
         self.alpha = alpha
         self.beta = beta
+        self.k = monte_carlo_samples
 
         # VAE component
         self.vae = HierarchicalVAE(
@@ -283,17 +281,19 @@ class TULVAE(nn.Module):
         loc_embedded: torch.Tensor,
         time_padded: torch.Tensor,
         seq_lengths: torch.Tensor,
+        u: torch.Tensor,
     ):
         """
         Forward pass combining classification and reconstruction.
 
         Args:
             loc_embedded: Padded tensors of location embeddings with shape (batch_size, max_seq_length, embedding_dim).
-            time_seq: Padded tensors of timestamps for each visit.
-            user_id: True user IDs for the sequences.
+            time_padded: Padded tensors of timestamps for each visit.
+            seq_lengths: Lengths of sequences in the batch.
+            u: User labels for each trajectory.
 
         Returns:
-            Reconstruction logits and latent variable mu + logvar for all user_ids, classification logits.
+            Classification logits, reconstruction logits, and latent variables mu + logvar for sampled user IDs.
         """
         # Get classification logits
         loc_seq_packed = pack_padded_sequence(
@@ -307,27 +307,43 @@ class TULVAE(nn.Module):
         # Get reconstruction logits and latent variables
         batch_size, max_seq_len, _ = loc_embedded.shape
 
-        # Expand sequences for all possible users to shape (batch_size*n_users, max_seq_length)
-        expanded_loc_padded = loc_embedded.repeat_interleave(self.n_users, dim=0)
-        expanded_time_padded = time_padded.repeat_interleave(self.n_users, dim=0)
-        expanded_lengths = seq_lengths.repeat_interleave(self.n_users)
+        # Sample self.k user IDs randomly for reconstruction
+        u_sample = torch.randint(
+            low=0,
+            high=self.n_users,
+            size=(
+                batch_size,
+                self.k - 1,
+            ),
+            device=u.device,
+        )
+        u_sample = torch.cat([u_sample, u[:, None]], -1).flatten()
+        u_sample = u_sample.repeat(batch_size)  # Expand for batch
 
-        # Create expanded user IDs tensor [batch_size * n_users]
-        all_user_ids = torch.arange(self.n_users, device=self.device)
-        expanded_user_ids = all_user_ids.repeat(batch_size)
+        # Expand sequences for sampled users
+        expanded_loc_padded = loc_embedded.repeat_interleave(self.k, dim=0)
+        expanded_time_padded = time_padded.repeat_interleave(self.k, dim=0)
+        expanded_lengths = seq_lengths.repeat_interleave(self.k)
 
-        # Get reconstruction logits from VAE for all combinations at once
+        # Get reconstruction logits from VAE for sampled users
         rec_logits, mu, logvar = self.vae(
             expanded_loc_padded,
             expanded_time_padded,
             expanded_lengths,
-            expanded_user_ids,
+            u_sample,
         )
-        mu = mu.reshape(batch_size, self.n_users, -1)
-        logvar = logvar.reshape(batch_size, self.n_users, -1)
-        rec_logits = rec_logits.reshape(batch_size, -1, self.n_users, max_seq_len)
+        mu = mu.reshape(batch_size, self.k, -1)
+        logvar = logvar.reshape(batch_size, self.k, -1)
+        rec_logits = rec_logits.reshape(batch_size, -1, self.k, max_seq_len)
+        # rec_logits.shape = (batch_size, n_locs, self.k, max_seq_len)
 
-        return clf_logits, rec_logits, mu, logvar
+        clf_probas = torch.softmax(clf_logits, dim=-1)
+        k_probas = clf_probas[
+            torch.arange(batch_size).repeat_interleave(self.k), u_sample
+        ]
+        k_probas = k_probas.reshape(batch_size, self.k)
+
+        return clf_logits, rec_logits, mu, logvar, k_probas
 
     def train_step(
         self, xc: List[torch.Tensor], tc: List[torch.Tensor], uc: torch.Tensor, **kwargs
@@ -339,19 +355,22 @@ class TULVAE(nn.Module):
         time_padded = pad_sequence(
             tc, batch_first=True, padding_value=2 * self.n_times[0]
         ).to(self.device)
+        uc = uc.to(self.device)
 
         # Embed locations
         xt_embedded = self.embedding(
             x_padded, pad_sequence(tc, batch_first=True).to(self.device)
         )
 
-        clf_logits, rec_logits, mu, logvar = self(xt_embedded, time_padded, seq_lengths)
+        clf_logits, rec_logits, mu, logvar, k_probas = self(
+            xt_embedded, time_padded, seq_lengths, uc
+        )
         # clf_logits.shape = (batch_size, n_users)
         # rec_logits.shape = (batch_size, n_locs, n_users, max_seq_len)
         # loc_padded.shape = (batch_size, max_seq_len)
         # loc.shape = (batch_size, max_seq_len)
-        clf_probas = torch.softmax(clf_logits, dim=-1)
-        rec_targets = x_padded[..., 0].unsqueeze(1).expand(-1, self.n_users, -1).long()
+
+        rec_targets = x_padded[..., 0].unsqueeze(1).expand(-1, self.k, -1).long()
         rec_losses = F.cross_entropy(
             rec_logits, rec_targets, ignore_index=0, reduction="none"
         )
@@ -359,18 +378,19 @@ class TULVAE(nn.Module):
         rec_losses = rec_losses.mean(dim=-1)
         latent_losses = -0.5 * (1 + logvar - mu.pow(2) - logvar.exp()).sum(-1)
         vae_losses = rec_losses + self.beta * latent_losses
+        vae_loss_diffs = vae_losses - vae_losses.mean(1)
 
-        unlab_loss = torch.einsum("ij,ij->i", clf_probas, vae_losses).mean()
-        lab_rec_loss = vae_losses[torch.arange(len(vae_losses)), uc].mean()
-        lab_clf_loss = F.cross_entropy(clf_logits, uc.to(self.device))
+        unlab_loss = torch.einsum("ik,ik->i", k_probas, vae_loss_diffs).mean()
+        lab_rec_loss = vae_losses[torch.arange(len(vae_losses)), -1].mean()
+        lab_clf_loss = F.cross_entropy(clf_logits, uc)
         loss = lab_rec_loss + lab_clf_loss + self.beta * unlab_loss
         return loss
 
     def pred_step(self, xc: List[torch.Tensor], tc: List[torch.Tensor], **kwargs):
         # Get sequence lengths and pad the sequences
         seq_lengths = torch.tensor([len(seq) for seq in xc])
-        x_padded = pad_sequence(xc, batch_first=True)
-        t_padded = pad_sequence(tc, batch_first=True)
+        x_padded = pad_sequence(xc, batch_first=True).to(self.device)
+        t_padded = pad_sequence(tc, batch_first=True).to(self.device)
         # Embed locations
         loc_embedded = self.embedding(x_padded, t_padded)
         loc_seq_packed = pack_padded_sequence(
