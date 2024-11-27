@@ -14,13 +14,13 @@ class T3S(nn.Module):
         n_locs: int,
         n_users: int,
         n_times: int,
-        embedding_type: str = "lookup",
+        embedding_type: str = "lookup_sum",
         loc_embedding_dim: int = 128,
         time_embedding_dim: int = 128,
         n_layers: int = 2,
         n_heads: int = 16,
         device: torch.device = "cuda:0",
-        **kwargs
+        **kwargs,
     ):
         super().__init__()
         self.device = device
@@ -77,7 +77,7 @@ class T3S(nn.Module):
         tc: List[torch.Tensor],
         llc: List[torch.Tensor],
         uc: torch.Tensor,
-        **kwargs
+        **kwargs,
     ):
         seq_lengths = torch.tensor([len(xci) for xci in xc])
         xc_padded = pad_sequence(xc, batch_first=True).to(self.device)
@@ -92,7 +92,7 @@ class T3S(nn.Module):
         xc: List[torch.Tensor],
         tc: List[torch.Tensor],
         llc: List[torch.Tensor],
-        **kwargs
+        **kwargs,
     ):
         seq_lengths = torch.tensor([len(xci) for xci in xc])
         xc_padded = pad_sequence(xc, batch_first=True).to(self.device)

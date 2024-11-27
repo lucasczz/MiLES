@@ -8,6 +8,7 @@ from einops import rearrange
 
 from src.embedding import EMBEDDING_TYPES
 
+
 def argunique(x: torch.Tensor, t: torch.Tensor):
     hash = t[..., 0] * (x[..., 0].max() + 1) + x[..., 0]
 
@@ -40,7 +41,7 @@ class CurrentEncoder(nn.Module):
         n_locs,
         n_times,
         n_hidden: int = 64,
-        embedding_type: str = "lookup",
+        embedding_type: str = "lookup_sum",
         loc_embedding_dim: int = 64,
         time_embedding_dim: int = 32,
         dropout: float = 0.6,
@@ -93,7 +94,7 @@ class HistoryEncoder(nn.Module):
         n_times: int,
         n_users: int,
         n_hidden: int = 64,
-        embedding_type: str = "lookup",
+        embedding_type: str = "lookup_sum",
         loc_embedding_dim: int = 64,
         time_embedding_dim: int = 32,
         user_embedding_dim: int = 32,
@@ -181,7 +182,7 @@ class DeepTUL(nn.Module):
         n_times: int,
         n_users: int,
         n_hidden: int = 64,
-        embedding_type: str = "lookup",
+        embedding_type: str = "lookup_sum",
         loc_embedding_dim: int = 64,
         time_embedding_dim: int = 32,
         user_embedding_dim: int = 32,
@@ -257,9 +258,8 @@ class DeepTUL(nn.Module):
         xh: List[torch.Tensor],
         th: List[torch.Tensor],
         uh: torch.Tensor,
-        **kwargs
+        **kwargs,
     ):
-
         preds = self(xc, tc, xh, th, uh)
         loss = F.cross_entropy(preds, uc.to(self.device))
         return loss
@@ -271,8 +271,7 @@ class DeepTUL(nn.Module):
         xh: List[torch.Tensor],
         th: List[torch.Tensor],
         uh: List[torch.Tensor],
-        **kwargs
+        **kwargs,
     ):
-
         logits = self(xc, tc, xh, th, uh)
         return logits

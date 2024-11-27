@@ -16,7 +16,7 @@ class HierarchicalVAE(nn.Module):
         n_times: int,
         n_users: int,
         n_hidden: int = 300,
-        embedding_type: str = "lookup",
+        embedding_type: str = "lookup_sum",
         loc_embedding_dim: int = 250,
         time_embedding_dim: int = 50,
         latent_dim: int = 50,
@@ -92,9 +92,10 @@ class HierarchicalVAE(nn.Module):
 
         # Get latent variable distribution
         poi_mu, poi_logvar = self.fc_mu_poi(poi_hidden), self.fc_logvar_poi(poi_hidden)
-        subseq_mu, subseq_logvar = self.fc_mu_subseq(
-            subseq_hidden
-        ), self.fc_logvar_subseq(subseq_hidden)
+        subseq_mu, subseq_logvar = (
+            self.fc_mu_subseq(subseq_hidden),
+            self.fc_logvar_subseq(subseq_hidden),
+        )
         mu = torch.cat([poi_mu, subseq_mu], dim=-1)
         logvar = torch.cat([poi_logvar, subseq_logvar], dim=-1)
 
@@ -139,7 +140,6 @@ class HierarchicalVAE(nn.Module):
         return mu + eps * std
 
     def encode_subseq(self, subseq_input: torch.Tensor) -> torch.Tensor:
-
         _, (h, _) = self.subseq_encoder_lstm(subseq_input)
         h = rearrange(h[-self.n_dirs :], "dir batch hidden -> batch (dir hidden)")
         return self.dropout(h)
@@ -222,7 +222,7 @@ class TULVAE(nn.Module):
         n_times: int,
         n_users: int,
         n_hidden: int = 512,
-        embedding_type: str = "lookup",
+        embedding_type: str = "lookup_sum",
         loc_embedding_dim: int = 300,
         time_embedding_dim: int = 50,
         latent_dim: int = 50,
@@ -348,7 +348,6 @@ class TULVAE(nn.Module):
     def train_step(
         self, xc: List[torch.Tensor], tc: List[torch.Tensor], uc: torch.Tensor, **kwargs
     ):
-
         # Get sequence lengths and pad the sequences
         seq_lengths = torch.tensor([len(seq) for seq in xc])
         x_padded = pad_sequence(xc, batch_first=True).to(self.device)

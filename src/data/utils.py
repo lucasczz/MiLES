@@ -38,7 +38,7 @@ def get_dataloader(
 
 
 def load_trajectories(dataset: str, n_users: int, subsample: int = None):
-    t_features = ["hour", "weekday", "is_workday", "timestamp"]
+    t_features = ["hour", "3hour", "weekday", "is_workday", "timestamp"]
     x_features = [f"cell{i}" for i in range(4)]
 
     # load and preprocess the data
@@ -50,6 +50,7 @@ def load_trajectories(dataset: str, n_users: int, subsample: int = None):
         x_features = ["point"] + x_features
 
     df["timestamp"] = df["timestamp"] - df["timestamp"].min()
+    df["3hour"] = df["hour"] // 3
     df["lon"] = (df["lon"] - df["lon"].min()) / (df["lon"].max() - df["lon"].min())
     df["lat"] = (df["lat"] - df["lat"].min()) / (df["lat"].max() - df["lat"].min())
 

@@ -44,7 +44,7 @@ def grid_search(
     lr: float = 1e-3,
     n_hidden: int = 128,
     n_layers: int = 1,
-    embedding_type: str = "lookup",
+    embedding_type: str = "lookup_sum",
     loc_embedding_factor: float = 1.0,
     time_embedding_factor: float = 0.25,
     dropout: float = 0.0,
@@ -54,7 +54,6 @@ def grid_search(
     debug: bool = False,
     **model_kwargs,
 ):
-
     batch_size = 1
     configs = get_config_grid(
         model_cls=model_cls,
@@ -108,7 +107,7 @@ def run(
     lr: float = 1e-3,
     n_hidden: int = 128,
     n_layers: int = 1,
-    embedding_type: str = "lookup",
+    embedding_type: str = "lookup_sum",
     loc_embedding_factor: float = 1.0,
     time_embedding_factor: float = 0.25,
     dropout: float = 0.0,
@@ -167,7 +166,6 @@ def run(
     else:
         iterator = dataloader
     for xc, tc, llc, uc in iterator:
-   
         with torch.inference_mode():
             model.eval()
             logits = model.pred_step(

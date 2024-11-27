@@ -1,13 +1,10 @@
 from bisect import bisect
-import math
-import random
 from typing import List, Literal
 from einops import rearrange
-import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from torch.nn.utils.rnn import pack_padded_sequence, pad_packed_sequence, pad_sequence
+from torch.nn.utils.rnn import pack_padded_sequence, pad_sequence
 
 from src.embedding import EMBEDDING_TYPES, CosineEmbedding
 
@@ -49,7 +46,7 @@ class LSTMEncoder(nn.Module):
         n_users: int,
         n_hidden: int,
         n_layers: int,
-        embedding_type: str = "lookup",
+        embedding_type: str = "lookup_sum",
         loc_embedding_dim: int = 512,
         time_embedding_dim: int = 0,
         dropout: float = 0.1,
@@ -154,7 +151,7 @@ class MainTUL(nn.Module):
         n_users: int,
         n_times: int = 24,
         n_hidden: int = 1024,
-        embedding_type: str = "lookup",
+        embedding_type: str = "lookup_sum",
         loc_embedding_dim: int = 512,
         time_embedding_dim: int = 128,
         lambduh: float = 1,
@@ -250,7 +247,7 @@ class MainTUL(nn.Module):
         xh: List[torch.Tensor] = [],
         th: List[torch.Tensor] = [],
         uh: torch.Tensor = torch.empty(0),
-        **kwargs
+        **kwargs,
     ):
         # uh.shape = [(n_sequences, ) for _ in range(batch_size)]
         lengths_c = torch.tensor([len(xci) for xci in xc])
