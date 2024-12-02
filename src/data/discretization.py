@@ -1,40 +1,67 @@
 from matplotlib import patches
 import numpy as np
-import geopandas as gpd
 import pandas as pd
-import folium
-import torch
 
-KEYS = {"axial": ["q", "r"], "oddq": ["col", "row"]}
-STYLE_GRID = {"fillOpacity": "0.0", "weight": 1}
-STYLE_VISITED = {
-    "fillOpacity": "0.2",
-    "weight": 1,
-    "color": "orange",
-    "fillColor": "orange",
-}
+
+def group_cells(qr, shape="hex", radius=1):
+    if shape == "hex":
+        qrs = np.concatenate([qr, -qr.sum(axis=-1)[..., None]], axis=-1)
+        area = 3 * radius**2 + 3 * radius + 1
+        shift = 3 * radius + 2
+
+        temp_qrs = (np.roll(qrs, -1, axis=-1) + shift * qrs) // area
+        qrs_big = (1 + temp_qrs - np.roll(temp_qrs, -1, axis=-1)) // 3
+        return qrs_big[:, :-1]
+    elif shape == "square" or shape == "diamond":
+        qr_big = np.floor_divide(qr, (3**radius))
+        return qr_big
 
 
 def get_hex_size(limits, n_rows):
     return (limits[1, 1] - limits[0, 1]) / ((n_rows + 0.5) * np.sqrt(3))
 
 
-def hexagonize(df, n_rows):
-
+def discretize_coordinates(df, n_rows, shape="hex", col_suffix=""):
     limits = np.array(
         [[df["lon"].min(), df["lat"].min()], [df["lon"].max(), df["lat"].max()]]
     )
-    hex_size = get_hex_size(limits=limits, n_rows=n_rows)
 
     xy = df[["lon", "lat"]].values
-    hdf = df.copy()
-    qr = coords_to_hex(xy, hex_size, limits[0])
-    hdf["q"] = qr[:, 0]
-    hdf["r"] = qr[:, 1]
-    return hdf
+    xy = xy - limits[0]
+    df_disc = df.copy()
+
+    if shape == "hex":
+        hex_size = get_hex_size(limits=limits, n_rows=n_rows)
+        qr = coords_to_hex(xy, hex_size)
+    elif shape == "square":
+        square_size = (limits[1, 1] - limits[0, 1]) / n_rows
+        qr = coords_to_square(xy, square_size)
+    elif shape == "diamond":
+        square_size = (limits[1, 1] - limits[0, 1]) / n_rows
+        qr = coords_to_diamond(xy, square_size)
+
+    df_disc[f"q{col_suffix}"] = qr[:, 0]
+    df_disc[f"r{col_suffix}"] = qr[:, 1]
+    return df_disc
 
 
-def coords_to_hex(coords: np.ndarray, hex_size: float, coord_offset: np.ndarray):
+def coords_to_square(coords: np.ndarray, square_size: float):
+    return np.floor_divide(coords, square_size)
+
+
+def coords_to_diamond(coords: np.ndarray, square_size: float):
+    rot_angle = np.pi / 4
+    a = np.array(
+        [
+            [np.cos(rot_angle), -np.sin(rot_angle)],
+            [np.sin(rot_angle), np.cos(rot_angle)],
+        ]
+    )
+    coords_rot = coords @ a.T
+    return np.floor_divide(coords_rot, square_size)
+
+
+def coords_to_hex(coords: np.ndarray, hex_size: float):
     """Converts geo-coordinates to axial hexgrid coordinates
 
     Parameters
@@ -48,9 +75,8 @@ def coords_to_hex(coords: np.ndarray, hex_size: float, coord_offset: np.ndarray)
     -------
     Axial coordinates of form [q, r]
     """
-    pixels = coords - coord_offset
     a = np.array([[2, -1], [0, np.sqrt(3)]]) / 3
-    fracs = pixels @ a / hex_size
+    fracs = coords @ a / hex_size
     return cell_round(fracs)
 
 
@@ -64,23 +90,6 @@ def cell_distance(cell1, cell2):
     if cell1.shape[-1] != 3:
         diff += np.abs(cell1.sum(-1) - cell2.sum(-1))
     return diff / 2
-
-
-def cell_distance_loss(p_input, q_input, r_input, q_target, r_target):
-    q_diff = q_target - q_input
-    r_diff = r_target - r_input
-    loss = torch.abs(q_diff) + torch.abs(r_diff) + torch.abs(q_diff + r_diff)
-    return loss / 2 @ p_input
-
-
-def small_to_big(qr, radius):
-    qrs = np.concatenate([qr, -qr.sum(axis=-1)[..., None]], axis=-1)
-    area = 3 * radius**2 + 3 * radius + 1
-    shift = 3 * radius + 2
-
-    temp_qrs = (np.roll(qrs, -1, axis=-1) + shift * qrs) // area
-    qrs_big = (1 + temp_qrs - np.roll(temp_qrs, -1, axis=-1)) // 3
-    return qrs_big[:, :-1]
 
 
 def cell_round(frac):
@@ -201,63 +210,3 @@ def get_hexgrid(
     ]
 
     return hexagons
-
-
-def oddq_to_axial(oddq):
-    """Convert offset coordinates to axial coordinates.
-
-    Parameters
-    ----------
-    oddq : _type_
-        Coordinates of form [col, row]
-
-    Returns
-    -------
-    axial
-        Coordinates of form [q, r]
-    """
-    axial_offset = np.zeros_like(oddq)
-    axial_offset[:, 1] = (oddq[:, 0] - oddq[:, 0] % 2) / 2
-    return oddq - axial_offset
-
-
-def axial_to_oddq(axial):
-    oddq_offset = np.zeros_like(axial)
-    oddq_offset[:, 1] = (axial[:, 0] - axial[:, 0] % 2) / 2
-    return axial + oddq_offset
-
-
-def plot_traj(grid: gpd.GeoDataFrame, axial=None, oddq=None):
-    if axial is not None:
-        keys = KEYS["axial"]
-        idx = axial
-    else:
-        keys = KEYS["oddq"]
-        idx = oddq
-
-    map = folium.Map(location=(40.2, 116.383331), zoom_start=8.2)
-    # grid = grid.set_index(keys)
-    pgrid = grid.to_crs("epsg:4326")
-    pgrid = pgrid.set_index(keys)
-    pgrid["visited"] = 0
-    pgrid.loc[idx.tolist(), "visited"] = 1
-    pgrid = pgrid.reset_index(names=keys)
-
-    grid_json = pgrid.to_json()
-    tooltip = folium.GeoJsonTooltip(fields=keys)
-
-    def get_style(feature):
-        props = feature["properties"]
-        if [props[key] for key in keys] in idx.tolist():
-            return STYLE_VISITED
-        else:
-            return STYLE_GRID
-
-    grid_layer = folium.GeoJson(
-        grid_json,
-        name="non-visited",
-        style_function=get_style,
-        tooltip=tooltip,
-    )
-    grid_layer.add_to(map)
-    return map

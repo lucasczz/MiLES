@@ -7,7 +7,6 @@ from tqdm import tqdm
 import os
 from pathlib import Path
 import geopandas as gpd
-from src.data.hex_utils import hexagonize, cell_distance, small_to_big
 
 
 def split_trajectories(df, max_hours, group_cols=["user"]):
@@ -46,7 +45,7 @@ def split_trajectories(df, max_hours, group_cols=["user"]):
     return df
 
 
-def get_hex_quantization(df, n_rows, remove_hex_duplicates=False):
+def project_lon_lat(df):
     print("Converting to GeoPandas dataframe...")
     gdf = gpd.GeoDataFrame(
         df, geometry=gpd.points_from_xy(df.lon, df.lat, crs="epsg:4326")
@@ -58,27 +57,7 @@ def get_hex_quantization(df, n_rows, remove_hex_duplicates=False):
     gdf = gdf.drop(columns=["geometry", "lon", "lat"])
     xy = xy.rename(columns={"x": "lon", "y": "lat"})
     gdf = pd.concat([gdf, xy], axis=1)
-    print("Hexagonizing trajectories...")
-    hdf = hexagonize(gdf, n_rows=n_rows)
-    hdf["cell0"] = hdf.groupby(["q", "r"]).ngroup() + 1
-
-    hdf = hdf.rename(columns={"q": "q0", "r": "r0"})
-
-    if remove_hex_duplicates:
-        print("Removing consecutive rows with identical cell coordinates...")
-        cells = hdf[["q0", "r0"]]
-        hdf["cell_dist"] = cell_distance(cells.values, cells.shift().values)
-        hdf["cell_dist"] = hdf["cell_dist"].fillna(1)
-        hdf = hdf[hdf["cell_dist"] >= 1]
-
-    for level in tqdm(list(range(1, 4)), desc="Computing high-level cells..."):
-        q_new, r_new = small_to_big(
-            qr=hdf[[f"q{level-1}", f"r{level-1}"]].values, radius=1
-        ).T
-        hdf[f"q{level}"] = q_new
-        hdf[f"r{level}"] = r_new
-        hdf[f"cell{level}"] = hdf.groupby([f"q{level}", f"r{level}"]).ngroup() + 1
-    return hdf
+    return gdf
 
 
 def get_time_features(df):
@@ -186,7 +165,6 @@ if __name__ == "__main__":
         for n_users_i in n_users:
             top_users = df.groupby("user").size().nlargest(n_users_i).index
             df_top_users = df[df["user"].isin(top_users)]
-            df_top_users = get_hex_quantization(df_top_users, n_rows=n_rows)
             df_top_users = get_time_features(df_top_users)
             print("Saving dataset...")
             df_top_users.to_csv(
@@ -214,8 +192,8 @@ if __name__ == "__main__":
     for n_users_i in n_users:
         top_users = df.groupby("user").size().nlargest(n_users_i).index
         df_top_users = df[df["user"].isin(top_users)]
-        df_top_users['user'] = df_top_users.groupby('user').ngroup()
-        df_top_users = get_hex_quantization(df_top_users, n_rows=n_rows)
+        df_top_users["user"] = df_top_users.groupby("user").ngroup()
+        df_top_users = project_lon_lat(df_top_users)
         df_top_users = get_time_features(df_top_users)
         print("Saving dataset...")
         df_top_users.to_csv(

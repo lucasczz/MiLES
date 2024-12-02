@@ -1,6 +1,6 @@
 from collections import deque
 from itertools import product
-from typing import Dict, List, Optional
+from typing import Dict, Optional
 import torch
 from tqdm import tqdm
 from torch.optim import Adam
@@ -49,6 +49,10 @@ def grid_search(
     time_embedding_factor: float = 0.25,
     dropout: float = 0.0,
     subsample: Optional[int] = None,
+    discretization_rows: int = 100,
+    discretization_shape: str= 'hex',
+    aggregation_mode: str = "group",
+    grow_factor: int = 2,
     device: torch.device = "cuda:0",
     log_path: str = "test.jsonl",
     debug: bool = False,
@@ -67,12 +71,14 @@ def grid_search(
         time_embedding_factor=time_embedding_factor,
         dropout=dropout,
         n_layers=n_layers,
+        discretization_rows=discretization_rows,
+        discretization_shape=discretization_shape,
+        aggregation_mode=aggregation_mode,
+        grow_factor=grow_factor,
+        subsample=subsample,
         **model_kwargs,
     )
     # Get the dataloader and other dataset-related information
-    dataloader, n_locs, n_times = get_dataloader(
-        dataset, n_users, batch_size, subsample
-    )
     if debug:
         configs = configs[2:5]
     # Iterate over all combinations and run the model
@@ -81,9 +87,7 @@ def grid_search(
             # Run the model with the current combination of parameters
             run(
                 dataset_name=dataset,
-                dataloader=dataloader,
-                n_locs=n_locs,
-                n_times=n_times,
+                batch_size=batch_size,
                 n_users=n_users,
                 device=device,
                 log_path=log_path,
@@ -96,11 +100,8 @@ def grid_search(
 
 def run(
     dataset_name: str,
-    dataloader,
     model_cls: torch.nn.Module,
     n_users: int,
-    n_locs: List[int],
-    n_times: List[int],
     loc_levels: int = 1,
     time_levels: int = 1,
     optimizer_cls: torch.optim.Optimizer = Adam,
@@ -114,10 +115,26 @@ def run(
     device: torch.device = "cuda:0",
     log_path: str = "test.jsonl",
     verbose: bool = True,
-    seed: int = 42,
     history_length: int = 1000,
+    batch_size: int = 1,
+    subsample: Optional[int] = None,
+    discretization_rows: int = 100,
+    discretization_shape: str = "hex",
+    grow_factor: int = 2,
+    aggregation_mode: str = "group",
+    seed: int = 42,
     **model_params: Dict,
 ):
+    dataloader, n_locs, n_times = get_dataloader(
+        dataset=dataset_name,
+        n_users=n_users,
+        discretization_rows=discretization_rows,
+        discretization_shape=discretization_shape,
+        batch_size=batch_size,
+        subsample=subsample,
+        aggregation_mode=aggregation_mode,
+        grow_factor=grow_factor,
+    )
     torch.manual_seed(seed)
     loc_embedding_dim = int(loc_embedding_factor * n_hidden)
     time_embedding_dim = int(time_embedding_factor * loc_embedding_dim)
@@ -157,6 +174,10 @@ def run(
         embedding_type=embedding_type,
         loc_embedding_factor=loc_embedding_factor,
         time_embedding_factor=time_embedding_factor,
+        discretization_rows=discretization_rows,
+        discretization_shape=discretization_shape,
+        grow_factor=grow_factor,
+        aggregation_mode=aggregation_mode,
         dropout=dropout,
         **model_params,
     )
