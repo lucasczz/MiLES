@@ -50,10 +50,11 @@ def grid_search(
     dropout: float = 0.0,
     subsample: Optional[int] = None,
     discretization_rows: int = 100,
-    discretization_shape: str= 'hex',
+    discretization_shape: str = "hex",
     aggregation_mode: str = "group",
     grow_factor: int = 2,
     device: torch.device = "cuda:0",
+    seed: int = 42,
     log_path: str = "test.jsonl",
     debug: bool = False,
     **model_kwargs,
@@ -76,6 +77,7 @@ def grid_search(
         aggregation_mode=aggregation_mode,
         grow_factor=grow_factor,
         subsample=subsample,
+        seed=seed,
         **model_kwargs,
     )
     # Get the dataloader and other dataset-related information
@@ -90,6 +92,7 @@ def grid_search(
                 batch_size=batch_size,
                 n_users=n_users,
                 device=device,
+                seed=seed,
                 log_path=log_path,
                 verbose=True,
                 **config,
