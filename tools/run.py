@@ -85,24 +85,20 @@ def grid_search(
         configs = configs[2:5]
     # Iterate over all combinations and run the model
     for config in tqdm(configs):
-        try:
-            # Run the model with the current combination of parameters
-            run(
-                dataset_name=dataset,
-                batch_size=batch_size,
-                n_users=n_users,
-                device=device,
-                seed=seed,
-                log_path=log_path,
-                verbose=True,
-                **config,
-            )
-        except Exception as e:
-            print(e)
+        # Run the model with the current combination of parameters
+        run(
+            dataset=dataset,
+            batch_size=batch_size,
+            n_users=n_users,
+            device=device,
+            log_path=log_path,
+            verbose=True,
+            **config,
+        )
 
 
 def run(
-    dataset_name: str,
+    dataset: str,
     model_cls: torch.nn.Module,
     n_users: int,
     loc_levels: int = 1,
@@ -128,8 +124,9 @@ def run(
     seed: int = 42,
     **model_params: Dict,
 ):
+    torch.set_float32_matmul_precision("high")
     dataloader, n_locs, n_times = get_dataloader(
-        dataset=dataset_name,
+        dataset=dataset,
         n_users=n_users,
         discretization_rows=discretization_rows,
         discretization_shape=discretization_shape,
@@ -165,7 +162,7 @@ def run(
     optimizer = optimizer_cls(model.parameters(), lr=lr)
 
     log_info = dict(
-        dataset=dataset_name,
+        dataset=dataset,
         n_users=n_users,
         loc_levels=loc_levels,
         time_levels=time_levels,
@@ -182,6 +179,7 @@ def run(
         grow_factor=grow_factor,
         aggregation_mode=aggregation_mode,
         dropout=dropout,
+        seed=seed,
         **model_params,
     )
     tracker = JSONTracker(save_path=log_path, parameters=log_info)
@@ -210,3 +208,71 @@ def run(
         llh += llc
         uh = torch.cat([uh[-history_length + 1 :], uc.to(uh.device)])
     tracker.save()
+
+
+from multiprocessing import Pool, cpu_count
+
+def run_with_kwargs(kwargs):
+    return run(**kwargs)
+
+def grid_search_parallel(
+    dataset: str,
+    model_cls: torch.nn.Module,
+    n_users: int,
+    loc_levels: 1,
+    time_levels: 1,
+    optimizer_cls: torch.optim.Optimizer = Adam,
+    lr: float = 1e-3,
+    n_hidden: int = 128,
+    n_layers: int = 1,
+    embedding_type: str = "lookup_sum",
+    loc_embedding_factor: float = 1.0,
+    time_embedding_factor: float = 0.25,
+    dropout: float = 0.0,
+    subsample: Optional[int] = None,
+    discretization_rows: int = 100,
+    discretization_shape: str = "hex",
+    aggregation_mode: str = "group",
+    grow_factor: int = 2,
+    device: torch.device = "cuda:0",
+    seed: int = 42,
+    log_path: str = "test.jsonl",
+    debug: bool = False,
+    num_workers: int = cpu_count(),  # Number of workers for parallel processing
+    **model_kwargs,
+):
+    batch_size = 1
+    configs = get_config_grid(
+        dataset_name=dataset,
+        batch_size=batch_size,
+        n_users=n_users,
+        device=device,
+        log_path=log_path,
+        verbose=False,
+        model_cls=model_cls,
+        loc_levels=loc_levels,
+        time_levels=time_levels,
+        optimizer_cls=optimizer_cls,
+        lr=lr,
+        n_hidden=n_hidden,
+        embedding_type=embedding_type,
+        loc_embedding_factor=loc_embedding_factor,
+        time_embedding_factor=time_embedding_factor,
+        dropout=dropout,
+        n_layers=n_layers,
+        discretization_rows=discretization_rows,
+        discretization_shape=discretization_shape,
+        aggregation_mode=aggregation_mode,
+        grow_factor=grow_factor,
+        subsample=subsample,
+        seed=seed,
+        **model_kwargs,
+    )
+
+    if debug:
+        configs = configs[2:5]
+
+    # Use multiprocessing Pool for parallel execution
+    with Pool(processes=num_workers) as pool:
+        # Use tqdm for progress bar
+        list(tqdm(pool.imap(run_with_kwargs, configs), total=len(configs)))

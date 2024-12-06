@@ -14,10 +14,16 @@ def _init_level_proportional(embedding_list):
             embedding.weight.data *= weight * 2
 
 
+def _init_unit_variance(embedding_list):
+    with torch.no_grad():
+        for embedding in embedding_list:
+            embedding.weight.data *= 1 / np.sqrt(len(embedding_list))
+
+
 def _init_only_top(embedding_list):
     with torch.no_grad():
-        for embedding in embedding_list[:-1]:
-            embedding.weight.data *= 0.1
+        for idx, embedding in embedding_list[:-1]:
+            embedding.weight.data *= 0
 
 
 class LookupSumEmbedding(nn.Module):
@@ -37,7 +43,7 @@ class LookupSumEmbedding(nn.Module):
                 for n in num_embeddings_loc
             ]
         )
-
+        _init_unit_variance(self.loc_embedding)
         self.time_embedding = nn.ModuleList(
             [
                 nn.Embedding(num_embeddings=n, embedding_dim=embedding_dim_time)
@@ -85,10 +91,11 @@ class LookupConcatEmbedding(nn.Module):
         super().__init__()
         self.embedding_dim_loc = embedding_dim_loc
 
-        loc_level_weights = np.arange(len(num_embeddings_loc) + 1, 1, -1)
-        loc_level_weights = loc_level_weights / loc_level_weights.sum()
+        loc_level_weights = np.geomspace(
+            0.5, 2 ** -len(num_embeddings_loc), len(num_embeddings_loc)
+        )
         loc_level_dims = (loc_level_weights * embedding_dim_loc).astype(int)
-        loc_level_dims[-1] = embedding_dim_loc - loc_level_dims[:-1].sum()
+        loc_level_dims[0] = embedding_dim_loc - loc_level_dims[1:].sum()
 
         time_level_dim = embedding_dim_time // len(num_embeddings_time)
         self.loc_embedding = nn.ModuleList(
@@ -119,7 +126,7 @@ class LookupConcatEmbedding(nn.Module):
         )
 
         if self.time_embedding:
-            t_embedded = torch.stack(
+            t_embedded = torch.concat(
                 [
                     embedding(t[..., level])
                     for level, embedding in enumerate(self.time_embedding)
@@ -156,8 +163,11 @@ class LookupWeightedSumEmbedding(nn.Module):
             ]
         )
         counts = torch.ones(len(num_embeddings_loc), dtype=torch.float32)
-        self.weights = nn.Parameter(counts, requires_grad=True)
-
+        self.x_weights = nn.Parameter(counts, requires_grad=True)
+        self.t_weights = nn.Parameter(
+            torch.ones(len(num_embeddings_time), dtype=torch.float32),
+            requires_grad=True,
+        )
         self.dim = (
             embedding_dim_loc + embedding_dim_time
             if self.time_embedding
@@ -166,16 +176,16 @@ class LookupWeightedSumEmbedding(nn.Module):
 
     def forward(self, x: torch.Tensor, t: torch.Tensor):
         # x.shape = (batch_size, max_seq_length, n_loc_features)
-        # loc_features = [POI, cell0, cell1, ...]
         # t.shape = (batch_size, max_seq_length, n_time_features)
-        # loc_features = [hour, 6h, day, weekend, timestamp]
+        # loc_features = [POI, cell0, cell1, ...]
+        # loc_features = [hour, 3h, 6h, day, weekend, timestamp]
         x_embedded = torch.stack(
             [
                 embedding(x[..., level])
                 for level, embedding in enumerate(self.loc_embedding)
             ],
         )
-        x_embedded = torch.einsum("lbsj,l->bsj", x_embedded, self.weights)
+        x_embedded = torch.einsum("lbsj,l->bsj", x_embedded, self.x_weights)
 
         if self.time_embedding:
             t_embedded = torch.stack(
@@ -183,8 +193,8 @@ class LookupWeightedSumEmbedding(nn.Module):
                     embedding(t[..., level])
                     for level, embedding in enumerate(self.time_embedding)
                 ]
-            ).sum(0)
-            # t_embedded = torch.einsum("lbsj,l->bsj", t_embedded, self.weights)
+            )
+            t_embedded = torch.einsum("lbsj,l->bsj", t_embedded, self.t_weights)
             return torch.cat([x_embedded, t_embedded], dim=-1)
         else:
             return x_embedded
