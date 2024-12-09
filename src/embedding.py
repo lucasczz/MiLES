@@ -33,6 +33,7 @@ class LookupSumEmbedding(nn.Module):
         embedding_dim_loc: int,
         num_embeddings_time: List[int] = [],
         embedding_dim_time: int = None,
+        weight_factor: int = 2,
     ):
         super().__init__()
         self.embedding_dim_loc = embedding_dim_loc
@@ -43,7 +44,19 @@ class LookupSumEmbedding(nn.Module):
                 for n in num_embeddings_loc
             ]
         )
-        _init_unit_variance(self.loc_embedding)
+        loc_level_weights = np.logspace(
+            0,
+            len(num_embeddings_loc)-1,
+            len(num_embeddings_loc),
+            base=weight_factor,
+        )
+        loc_level_dims = (loc_level_weights * embedding_dim_loc).astype(int)
+        loc_level_dims[0] = embedding_dim_loc - loc_level_dims[1:].sum()
+
+        with torch.no_grad():
+            for loc_level_dim, embedding in zip(loc_level_dims, self.loc_embedding):
+                embedding.weight.data *= 1 / np.sqrt(len(self.loc_embedding))
+
         self.time_embedding = nn.ModuleList(
             [
                 nn.Embedding(num_embeddings=n, embedding_dim=embedding_dim_time)
@@ -87,12 +100,16 @@ class LookupConcatEmbedding(nn.Module):
         embedding_dim_loc: int,
         num_embeddings_time: List[int] = [],
         embedding_dim_time: int = None,
+        weight_factor: int = 2,
     ):
         super().__init__()
         self.embedding_dim_loc = embedding_dim_loc
 
-        loc_level_weights = np.geomspace(
-            0.5, 2 ** -len(num_embeddings_loc), len(num_embeddings_loc)
+        loc_level_weights = np.logspace(
+            0,
+            1 - len(num_embeddings_loc),
+            len(num_embeddings_loc),
+            base=weight_factor,
         )
         loc_level_dims = (loc_level_weights * embedding_dim_loc).astype(int)
         loc_level_dims[0] = embedding_dim_loc - loc_level_dims[1:].sum()
@@ -145,6 +162,7 @@ class LookupWeightedSumEmbedding(nn.Module):
         embedding_dim_loc: int,
         num_embeddings_time: List[int] = [],
         embedding_dim_time: int = None,
+        weight_factor: int = 2,
     ):
         super().__init__()
         self.embedding_dim_loc = embedding_dim_loc

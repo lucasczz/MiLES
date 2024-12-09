@@ -15,6 +15,7 @@ class T3S(nn.Module):
         n_users: int,
         n_times: int,
         embedding_type: str = "lookup_sum",
+        embedding_weight_factor: float = 2,
         loc_embedding_dim: int = 128,
         time_embedding_dim: int = 128,
         n_layers: int = 2,
@@ -29,6 +30,7 @@ class T3S(nn.Module):
             embedding_dim_loc=loc_embedding_dim,
             num_embeddings_time=n_times,
             embedding_dim_time=time_embedding_dim,
+            weight_factor=embedding_weight_factor,
         )
         self.pos_embedding = PositionalEmbedding(
             d_model=self.embedding.dim, max_len=500

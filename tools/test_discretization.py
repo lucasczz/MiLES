@@ -1,14 +1,19 @@
 from run import get_config_grid, run_with_kwargs
 from torch.optim import Adam
-from multiprocessing import Pool
+from multiprocessing import Pool, Manager, Process
+from pathlib import Path
 from tqdm import tqdm
 
 from src.models import BiTULER, TULHOR
+from src.data.tracker import handle_queue
+
+BASEPATH = Path(__file__).parent.parent.joinpath("reports")
 
 if __name__ == "__main__":
     seeds = [0, 1, 2, 3, 4]
     devices = ["cuda:4", "cuda:5", "cuda:7"]
-    num_workers = 12
+    path = BASEPATH.joinpath("discretization_grid_new.jsonl")
+    num_workers = 2
     configs = []
     for embedding_type in ["lookup_concat", "lookup_sum"]:
         # Concat
@@ -29,9 +34,9 @@ if __name__ == "__main__":
             n_layers=1,
             loc_embedding_factor=1,
             time_embedding_factor=1 / 16,
-            subsample=None,
+            subsample=500,
             seed=seeds,
-            log_path="discretization_grid_new.jsonl",
+            log_path=path,
         )
         configs += get_config_grid(
             dataset="foursquare_NYC",
@@ -50,9 +55,9 @@ if __name__ == "__main__":
             n_layers=1,
             loc_embedding_factor=1,
             time_embedding_factor=1 / 16,
-            subsample=None,
+            subsample=500,
             seed=seeds,
-            log_path="discretization_grid_new.jsonl",
+            log_path=path,
         )
 
     # Concat TULHOR
@@ -74,9 +79,9 @@ if __name__ == "__main__":
         n_heads=16,
         loc_embedding_factor=1,
         time_embedding_factor=1 / 16,
-        subsample=None,
+        subsample=500,
         seed=seeds,
-        log_path="discretization_grid_new.jsonl",
+        log_path=path,
     )
 
     # Baselines
@@ -99,15 +104,27 @@ if __name__ == "__main__":
         loc_embedding_factor=1,
         time_embedding_factor=1 / 16,
         seed=seeds,
-        subsample=None,
-        log_path="discretization_grid_new.jsonl",
+        subsample=500,
+        log_path=path,
     )
+    manager = Manager()
+    q = manager.Queue()
 
     # Distribute accross GPUs
     for i, entry in enumerate(configs):
         entry["device"] = devices[i % len(devices)]
-        entry['verbose'] = False
+        entry["verbose"] = False
+        entry["write_queue"] = q
 
-    with Pool(processes=num_workers) as pool:
-        # Use tqdm for progress bar
-        list(tqdm(pool.imap(run_with_kwargs, configs), total=len(configs)))
+    pool = Pool(processes=num_workers)
+
+    # Start a dedicated process for the queue
+    queue_process = Process(target=handle_queue, args=(q, path))
+    queue_process.start()
+
+    # Use tqdm for progress bar
+    results = list(tqdm(pool.imap(run_with_kwargs, configs), total=len(configs)))
+
+    q.put("kill")
+    pool.close()
+    pool.join()

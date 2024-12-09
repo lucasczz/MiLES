@@ -9,141 +9,6 @@ from torch.nn.utils.rnn import pack_padded_sequence, pad_sequence
 from src.embedding import EMBEDDING_TYPES, CosineEmbedding
 
 
-def masked_max_pool(
-    encoder_output: torch.Tensor, seq_lengths: torch.Tensor
-) -> torch.Tensor:
-    """
-    Compute maximum over sequence length dimension while respecting sequence lengths.
-
-    Args:
-        encoder_output: Tensor of shape (batch_size, max_seq_len, model_dim)
-        seq_lengths: Tensor of shape (batch_size,) containing actual sequence lengths
-
-    Returns:
-        Tensor of shape (batch_size, model_dim) containing the maximum values
-    """
-    batch_size, max_seq_len, model_dim = encoder_output.shape
-
-    # Create mask: (batch_size, max_seq_len)
-    mask = torch.arange(max_seq_len, device=encoder_output.device).unsqueeze(
-        0
-    ) >= seq_lengths.unsqueeze(-1).to(encoder_output.device)
-
-    # Set padding positions to negative infinity
-    masked_output = encoder_output.masked_fill(mask.unsqueeze(-1), float("-inf"))
-
-    # Take maximum over sequence length dimension (dim=1)
-    pooled = torch.max(masked_output, dim=1)[0]
-
-    return pooled
-
-
-class LSTMEncoder(nn.Module):
-    def __init__(
-        self,
-        n_locs: int,
-        n_times: int,
-        n_users: int,
-        n_hidden: int,
-        n_layers: int,
-        embedding_type: str = "lookup_sum",
-        loc_embedding_dim: int = 512,
-        time_embedding_dim: int = 0,
-        dropout: float = 0.1,
-        bidirectional: bool = False,
-    ):
-        super().__init__()
-        self.loc_embedding_dim = loc_embedding_dim
-        self.n_locs = n_locs
-        self.n_times = n_times
-        self.n_dirs = 1 + bidirectional
-        self.n_hidden = n_hidden
-        self.embedding = EMBEDDING_TYPES[embedding_type](
-            num_embeddings_loc=n_locs,
-            embedding_dim_loc=loc_embedding_dim,
-            num_embeddings_time=n_times,
-            embedding_dim_time=time_embedding_dim,
-        )
-        self.fc_embedding = nn.Linear(
-            in_features=self.embedding.dim,
-            out_features=loc_embedding_dim,
-        )
-        self.lstm = nn.LSTM(
-            input_size=loc_embedding_dim,
-            hidden_size=n_hidden,
-            num_layers=n_layers,
-            bidirectional=bidirectional,
-            batch_first=True,
-        )
-        self.dropout = nn.Dropout(dropout)
-
-        self.fc_out = nn.Linear(n_hidden, n_users)
-
-    def forward(
-        self, x_padded: torch.Tensor, t_padded: torch.Tensor, traj_lengths: torch.Tensor
-    ):
-        xt_embed = self.embedding(x_padded, t_padded)
-        xt_enc = F.tanh(self.fc_embedding(xt_embed))
-        xt_enc = self.dropout(xt_enc)
-
-        xt_packed = pack_padded_sequence(
-            xt_enc, traj_lengths, batch_first=True, enforce_sorted=False
-        )
-        _, (h, _) = self.lstm(xt_packed)  # out.shape = (batch, seq, 2*n_hidden)
-        h = rearrange(h[-self.n_dirs :], "dirs batch hidden -> batch (dirs hidden)")
-        return self.fc_out(h)
-
-
-class TemporalTransformerEncoder(nn.Module):
-    def __init__(
-        self,
-        n_locs: int,
-        n_times: int,
-        n_users: int,
-        n_hidden: int,
-        n_layers: int,
-        n_heads: int,
-        loc_embedding_dim: int = 512,
-        time_embedding_dim: int = 0,
-        dropout: float = 0.1,
-    ):
-        super().__init__()
-        self.embedding = CosineEmbedding(
-            num_embeddings_loc=n_locs,
-            embedding_dim_loc=loc_embedding_dim,
-            num_embeddings_time=n_times,
-            embedding_dim_time=time_embedding_dim,
-        )
-
-        encoder_layer = nn.TransformerEncoderLayer(
-            d_model=self.embedding.dim,
-            nhead=n_heads,
-            dim_feedforward=n_hidden,
-            dropout=dropout,
-            batch_first=True,
-        )
-        self.encoder = nn.TransformerEncoder(
-            encoder_layer=encoder_layer,
-            num_layers=n_layers,
-            norm=nn.LayerNorm(self.embedding.dim, eps=1e-6),
-        )
-        self.dropout = nn.Dropout(dropout)
-        self.fc_out = nn.Linear(self.embedding.dim, n_users)
-
-    def forward(
-        self,
-        x: torch.Tensor,
-        t: torch.Tensor,
-        seq_lengths: torch.Tensor,
-    ):
-        padding_mask = x[..., 0] == 0
-        xtts_embedded = self.dropout(self.embedding(x, t))
-        xtts_encoded = self.encoder(xtts_embedded, src_key_padding_mask=padding_mask)
-        # xtts_enc.shape = (batch_size, max_seq_length, embedding_dim)
-        xtts_pooled = masked_max_pool(xtts_encoded, seq_lengths)
-        return self.fc_out(xtts_pooled)
-
-
 class MainTUL(nn.Module):
     def __init__(
         self,
@@ -152,6 +17,7 @@ class MainTUL(nn.Module):
         n_times: int = 24,
         n_hidden: int = 1024,
         embedding_type: str = "lookup_sum",
+        embedding_weight_factor: float= 2,
         loc_embedding_dim: int = 512,
         time_embedding_dim: int = 128,
         lambduh: float = 1,
@@ -182,6 +48,7 @@ class MainTUL(nn.Module):
             n_layers=n_layers,
             n_hidden=n_hidden,
             embedding_type=embedding_type,
+            embedding_weight_factor=embedding_weight_factor,
             loc_embedding_dim=loc_embedding_dim,
             time_embedding_dim=time_embedding_dim,
             dropout=dropout,
@@ -293,6 +160,143 @@ class MainTUL(nn.Module):
         tc_padded = pad_sequence(tc, batch_first=True).to(self.device)
         logits = self.student(xc_padded, tc_padded, lengths_c)
         return logits
+
+
+def masked_max_pool(
+    encoder_output: torch.Tensor, seq_lengths: torch.Tensor
+) -> torch.Tensor:
+    """
+    Compute maximum over sequence length dimension while respecting sequence lengths.
+
+    Args:
+        encoder_output: Tensor of shape (batch_size, max_seq_len, model_dim)
+        seq_lengths: Tensor of shape (batch_size,) containing actual sequence lengths
+
+    Returns:
+        Tensor of shape (batch_size, model_dim) containing the maximum values
+    """
+    batch_size, max_seq_len, model_dim = encoder_output.shape
+
+    # Create mask: (batch_size, max_seq_len)
+    mask = torch.arange(max_seq_len, device=encoder_output.device).unsqueeze(
+        0
+    ) >= seq_lengths.unsqueeze(-1).to(encoder_output.device)
+
+    # Set padding positions to negative infinity
+    masked_output = encoder_output.masked_fill(mask.unsqueeze(-1), float("-inf"))
+
+    # Take maximum over sequence length dimension (dim=1)
+    pooled = torch.max(masked_output, dim=1)[0]
+
+    return pooled
+
+
+class LSTMEncoder(nn.Module):
+    def __init__(
+        self,
+        n_locs: int,
+        n_times: int,
+        n_users: int,
+        n_hidden: int,
+        n_layers: int,
+        embedding_type: str = "lookup_sum",
+        embedding_weight_factor: float = 2,
+        loc_embedding_dim: int = 512,
+        time_embedding_dim: int = 0,
+        dropout: float = 0.1,
+        bidirectional: bool = False,
+    ):
+        super().__init__()
+        self.loc_embedding_dim = loc_embedding_dim
+        self.n_locs = n_locs
+        self.n_times = n_times
+        self.n_dirs = 1 + bidirectional
+        self.n_hidden = n_hidden
+        self.embedding = EMBEDDING_TYPES[embedding_type](
+            num_embeddings_loc=n_locs,
+            embedding_dim_loc=loc_embedding_dim,
+            num_embeddings_time=n_times,
+            embedding_dim_time=time_embedding_dim,
+            weight_factor=embedding_weight_factor,
+        )
+        self.fc_embedding = nn.Linear(
+            in_features=self.embedding.dim,
+            out_features=loc_embedding_dim,
+        )
+        self.lstm = nn.LSTM(
+            input_size=loc_embedding_dim,
+            hidden_size=n_hidden,
+            num_layers=n_layers,
+            bidirectional=bidirectional,
+            batch_first=True,
+        )
+        self.dropout = nn.Dropout(dropout)
+
+        self.fc_out = nn.Linear(n_hidden, n_users)
+
+    def forward(
+        self, x_padded: torch.Tensor, t_padded: torch.Tensor, traj_lengths: torch.Tensor
+    ):
+        xt_embed = self.embedding(x_padded, t_padded)
+        xt_enc = F.tanh(self.fc_embedding(xt_embed))
+        xt_enc = self.dropout(xt_enc)
+
+        xt_packed = pack_padded_sequence(
+            xt_enc, traj_lengths, batch_first=True, enforce_sorted=False
+        )
+        _, (h, _) = self.lstm(xt_packed)  # out.shape = (batch, seq, 2*n_hidden)
+        h = rearrange(h[-self.n_dirs :], "dirs batch hidden -> batch (dirs hidden)")
+        return self.fc_out(h)
+
+
+class TemporalTransformerEncoder(nn.Module):
+    def __init__(
+        self,
+        n_locs: int,
+        n_times: int,
+        n_users: int,
+        n_hidden: int,
+        n_layers: int,
+        n_heads: int,
+        loc_embedding_dim: int = 512,
+        time_embedding_dim: int = 0,
+        dropout: float = 0.1,
+    ):
+        super().__init__()
+        self.embedding = CosineEmbedding(
+            num_embeddings_loc=n_locs,
+            embedding_dim_loc=loc_embedding_dim,
+            num_embeddings_time=n_times,
+            embedding_dim_time=time_embedding_dim,
+        )
+
+        encoder_layer = nn.TransformerEncoderLayer(
+            d_model=self.embedding.dim,
+            nhead=n_heads,
+            dim_feedforward=n_hidden,
+            dropout=dropout,
+            batch_first=True,
+        )
+        self.encoder = nn.TransformerEncoder(
+            encoder_layer=encoder_layer,
+            num_layers=n_layers,
+            norm=nn.LayerNorm(self.embedding.dim, eps=1e-6),
+        )
+        self.dropout = nn.Dropout(dropout)
+        self.fc_out = nn.Linear(self.embedding.dim, n_users)
+
+    def forward(
+        self,
+        x: torch.Tensor,
+        t: torch.Tensor,
+        seq_lengths: torch.Tensor,
+    ):
+        padding_mask = x[..., 0] == 0
+        xtts_embedded = self.dropout(self.embedding(x, t))
+        xtts_encoded = self.encoder(xtts_embedded, src_key_padding_mask=padding_mask)
+        # xtts_enc.shape = (batch_size, max_seq_length, embedding_dim)
+        xtts_pooled = masked_max_pool(xtts_encoded, seq_lengths)
+        return self.fc_out(xtts_pooled)
 
 
 def compute_loss_dis(student_output, teacher_output, temperature):

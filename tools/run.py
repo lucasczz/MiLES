@@ -4,6 +4,7 @@ from typing import Dict, Optional
 import torch
 from tqdm import tqdm
 from torch.optim import Adam
+from multiprocessing import Pool
 
 from src.data.tracker import JSONTracker
 from src.data.utils import get_dataloader
@@ -122,6 +123,7 @@ def run(
     grow_factor: int = 2,
     aggregation_mode: str = "group",
     seed: int = 42,
+    write_queue=None,
     **model_params: Dict,
 ):
     torch.set_float32_matmul_precision("high")
@@ -182,7 +184,9 @@ def run(
         seed=seed,
         **model_params,
     )
-    tracker = JSONTracker(save_path=log_path, parameters=log_info)
+    tracker = JSONTracker(
+        save_path=log_path, parameters=log_info, write_queue=write_queue
+    )
     if verbose:
         iterator = tqdm(dataloader, leave=False)
     else:
@@ -210,10 +214,9 @@ def run(
     tracker.save()
 
 
-from multiprocessing import Pool, cpu_count
-
 def run_with_kwargs(kwargs):
     return run(**kwargs)
+
 
 def grid_search_parallel(
     dataset: str,
@@ -238,7 +241,7 @@ def grid_search_parallel(
     seed: int = 42,
     log_path: str = "test.jsonl",
     debug: bool = False,
-    num_workers: int = cpu_count(),  # Number of workers for parallel processing
+    num_workers: int = 6,  # Number of workers for parallel processing
     **model_kwargs,
 ):
     batch_size = 1
