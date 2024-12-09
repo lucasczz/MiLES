@@ -46,16 +46,14 @@ class LookupSumEmbedding(nn.Module):
         )
         loc_level_weights = np.logspace(
             0,
-            len(num_embeddings_loc)-1,
+            len(num_embeddings_loc) - 1,
             len(num_embeddings_loc),
             base=weight_factor,
         )
-        loc_level_dims = (loc_level_weights * embedding_dim_loc).astype(int)
-        loc_level_dims[0] = embedding_dim_loc - loc_level_dims[1:].sum()
-
+        loc_level_weights /= loc_level_weights.sum()
         with torch.no_grad():
-            for loc_level_dim, embedding in zip(loc_level_dims, self.loc_embedding):
-                embedding.weight.data *= 1 / np.sqrt(len(self.loc_embedding))
+            for loc_level_mult, embedding in zip(loc_level_weights, self.loc_embedding):
+                embedding.weight.data *= loc_level_mult
 
         self.time_embedding = nn.ModuleList(
             [
@@ -111,6 +109,7 @@ class LookupConcatEmbedding(nn.Module):
             len(num_embeddings_loc),
             base=weight_factor,
         )
+        loc_level_weights /= loc_level_weights.sum()
         loc_level_dims = (loc_level_weights * embedding_dim_loc).astype(int)
         loc_level_dims[0] = embedding_dim_loc - loc_level_dims[1:].sum()
 

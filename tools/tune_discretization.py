@@ -12,7 +12,7 @@ BASEPATH = Path(__file__).parent.parent.joinpath("reports")
 if __name__ == "__main__":
     devices = ["cuda:1", "cuda:2", "cuda:3", "cuda:7"]
     path = BASEPATH.joinpath("discretization_grid_tune.jsonl")
-    num_workers = 8
+    num_workers = 12
     configs = []
     for model, lr in [(BiTULER, 2e-4), (TULHOR, 1e-4)]:
         configs += get_config_grid(
@@ -51,7 +51,7 @@ if __name__ == "__main__":
             lr=lr,
             n_hidden=1024,
             n_layers=1,
-            embedding_type=["lookup_sum", "lookup_concat"],
+            embedding_type=["lookup_concat"],
             embedding_weight_factor=[1, 2, 3],
             loc_embedding_factor=1,
             time_embedding_factor=1 / 16,
