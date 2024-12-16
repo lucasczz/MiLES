@@ -28,6 +28,7 @@ class MainTUL(nn.Module):
         bidirectional: bool = False,
         augment_strategy: Literal["recent", "random"] = "random",
         n_augment: int = 16,
+        loc_level: int = None,
         device: torch.device = "cuda:0",
     ):
         super().__init__()
@@ -53,6 +54,7 @@ class MainTUL(nn.Module):
             time_embedding_dim=time_embedding_dim,
             dropout=dropout,
             bidirectional=bidirectional,
+            loc_level=loc_level
         )
         self.teacher = TemporalTransformerEncoder(
             n_locs=n_locs,
@@ -205,6 +207,7 @@ class LSTMEncoder(nn.Module):
         time_embedding_dim: int = 0,
         dropout: float = 0.1,
         bidirectional: bool = False,
+        loc_level:int=None,
     ):
         super().__init__()
         self.loc_embedding_dim = loc_embedding_dim
@@ -218,6 +221,7 @@ class LSTMEncoder(nn.Module):
             num_embeddings_time=n_times,
             embedding_dim_time=time_embedding_dim,
             weight_factor=embedding_weight_factor,
+            loc_level=loc_level,
         )
         self.fc_embedding = nn.Linear(
             in_features=self.embedding.dim,

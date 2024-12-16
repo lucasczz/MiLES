@@ -22,6 +22,7 @@ class DeepTUL(nn.Module):
         user_embedding_dim: int = 32,
         dropout: float = 0.6,
         n_layers: int = 1,
+        loc_level: int = None,
         device: torch.device = "cuda:0",
         bidirectional: bool = True,
     ):
@@ -36,6 +37,7 @@ class DeepTUL(nn.Module):
             time_embedding_dim=time_embedding_dim,
             dropout=dropout,
             n_layers=n_layers,
+            loc_level=loc_level,
             device=device,
             bidirectional=bidirectional,
         )
@@ -51,6 +53,7 @@ class DeepTUL(nn.Module):
             user_embedding_dim=user_embedding_dim,
             dropout=dropout,
             n_layers=n_layers,
+            loc_level=loc_level,
             device=device,
         )
         self.clf = nn.Linear(4 * n_hidden, n_users)
@@ -150,6 +153,7 @@ class CurrentEncoder(nn.Module):
         time_embedding_dim: int = 32,
         dropout: float = 0.6,
         n_layers: int = 1,
+        loc_level: int = None,
         device: torch.device = "cuda:0",
         bidirectional: bool = True,
     ):
@@ -166,6 +170,7 @@ class CurrentEncoder(nn.Module):
             num_embeddings_time=n_times,
             embedding_dim_time=time_embedding_dim,
             weight_factor=embedding_weight_factor,
+            loc_level=loc_level,
         )
         self.lstm = nn.LSTM(
             self.embedding.dim,
@@ -206,6 +211,7 @@ class HistoryEncoder(nn.Module):
         user_embedding_dim: int = 32,
         dropout: float = 0.6,
         n_layers: int = 1,
+        loc_level: int = None,
         device: torch.device = "cuda:0",
     ):
         super().__init__()
@@ -218,7 +224,8 @@ class HistoryEncoder(nn.Module):
             embedding_dim_loc=loc_embedding_dim,
             num_embeddings_time=n_times,
             embedding_dim_time=time_embedding_dim,
-            weight_factor=embedding_weight_factor
+            weight_factor=embedding_weight_factor,
+            loc_level=loc_level,
         )
         self.user_embedding_dim = user_embedding_dim
         self.embedding_dim = self.embedding.dim + user_embedding_dim

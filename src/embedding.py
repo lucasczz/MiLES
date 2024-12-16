@@ -1,6 +1,6 @@
 import math
 import numpy as np
-from typing import List
+from typing import List, Optional
 import torch
 from torch import nn
 import torch.nn.functional as F
@@ -34,26 +34,35 @@ class LookupSumEmbedding(nn.Module):
         num_embeddings_time: List[int] = [],
         embedding_dim_time: int = None,
         weight_factor: int = 2,
+        loc_level: Optional[int] = None,
     ):
         super().__init__()
         self.embedding_dim_loc = embedding_dim_loc
 
-        self.loc_embedding = nn.ModuleList(
-            [
-                nn.Embedding(num_embeddings=n, embedding_dim=embedding_dim_loc)
-                for n in num_embeddings_loc
-            ]
-        )
-        loc_level_weights = np.logspace(
-            0,
-            len(num_embeddings_loc) - 1,
-            len(num_embeddings_loc),
-            base=weight_factor,
-        )
-        loc_level_weights /= loc_level_weights.sum()
-        with torch.no_grad():
-            for loc_level_mult, embedding in zip(loc_level_weights, self.loc_embedding):
-                embedding.weight.data *= loc_level_mult
+        if loc_level:
+            self.loc_embedding = nn.Embedding(
+                num_embeddings=num_embeddings_loc[loc_level],
+                embedding_dim=embedding_dim_loc,
+            )
+        else:
+            self.loc_embedding = nn.ModuleList(
+                [
+                    nn.Embedding(num_embeddings=n, embedding_dim=embedding_dim_loc)
+                    for n in num_embeddings_loc
+                ]
+            )
+            loc_level_weights = np.logspace(
+                0,
+                len(num_embeddings_loc) - 1,
+                len(num_embeddings_loc),
+                base=weight_factor,
+            )
+            loc_level_weights /= loc_level_weights.sum()
+            with torch.no_grad():
+                for loc_level_mult, embedding in zip(
+                    loc_level_weights, self.loc_embedding
+                ):
+                    embedding.weight.data *= loc_level_mult
 
         self.time_embedding = nn.ModuleList(
             [
@@ -66,18 +75,22 @@ class LookupSumEmbedding(nn.Module):
             if len(num_embeddings_time) > 0
             else embedding_dim_loc
         )
+        self.loc_level = loc_level
 
     def forward(self, x: torch.Tensor, t: torch.Tensor):
         # x.shape = (batch_size, max_seq_length, n_loc_features)
         # loc_features = [POI, cell0, cell1, ...]
         # t.shape = (batch_size, max_seq_length, n_time_features)
         # loc_features = [hour, 6h, day, weekend, timestamp]
-        x_embedded = torch.stack(
-            [
-                embedding(x[..., level])
-                for level, embedding in enumerate(self.loc_embedding)
-            ]
-        ).sum(0)
+        if self.loc_level:
+            x_embedded = self.loc_embedding(x[..., self.loc_level])
+        else:
+            x_embedded = torch.stack(
+                [
+                    embedding(x[..., level])
+                    for level, embedding in enumerate(self.loc_embedding)
+                ]
+            ).sum(0)
         if self.time_embedding:
             t_embedded = torch.stack(
                 [
@@ -99,47 +112,69 @@ class LookupConcatEmbedding(nn.Module):
         num_embeddings_time: List[int] = [],
         embedding_dim_time: int = None,
         weight_factor: int = 2,
+        loc_level: Optional[int] = None,
     ):
         super().__init__()
         self.embedding_dim_loc = embedding_dim_loc
+        if loc_level:
+            self.loc_embedding = nn.Embedding(
+                num_embeddings=num_embeddings_loc[loc_level],
+                embedding_dim=embedding_dim_loc,
+            )
 
-        loc_level_weights = np.logspace(
+        else:
+            loc_level_weights = np.logspace(
+                0,
+                1 - len(num_embeddings_loc),
+                len(num_embeddings_loc),
+                base=weight_factor,
+            )
+            loc_level_weights /= loc_level_weights.sum()
+            loc_level_dims = (loc_level_weights * embedding_dim_loc).astype(int)
+            loc_level_dims[0] = embedding_dim_loc - loc_level_dims[1:].sum()
+
+            self.loc_embedding = nn.ModuleList(
+                [
+                    nn.Embedding(num_embeddings=n, embedding_dim=l_dim)
+                    for n, l_dim in zip(num_embeddings_loc, loc_level_dims)
+                ]
+            )
+
+        time_level_weights = np.logspace(
             0,
-            1 - len(num_embeddings_loc),
-            len(num_embeddings_loc),
+            1 - len(num_embeddings_time),
+            len(num_embeddings_time),
             base=weight_factor,
         )
-        loc_level_weights /= loc_level_weights.sum()
-        loc_level_dims = (loc_level_weights * embedding_dim_loc).astype(int)
-        loc_level_dims[0] = embedding_dim_loc - loc_level_dims[1:].sum()
+        time_level_weights /= time_level_weights.sum()
+        time_level_dims = (time_level_weights * embedding_dim_time).astype(int)
+        time_level_dims[0] = embedding_dim_time - time_level_dims[1:].sum()
 
-        time_level_dim = embedding_dim_time // len(num_embeddings_time)
-        self.loc_embedding = nn.ModuleList(
-            [
-                nn.Embedding(num_embeddings=n, embedding_dim=dim)
-                for n, dim in zip(num_embeddings_loc, loc_level_dims)
-            ]
-        )
         self.time_embedding = nn.ModuleList(
             [
-                nn.Embedding(num_embeddings=n, embedding_dim=time_level_dim)
-                for n in num_embeddings_time
+                nn.Embedding(num_embeddings=n, embedding_dim=t_dim)
+                for n, t_dim in zip(num_embeddings_time, time_level_dims)
             ]
         )
-        self.dim = embedding_dim_loc + time_level_dim * len(num_embeddings_time)
+        self.dim = embedding_dim_loc + embedding_dim_time
+        self.loc_level = loc_level
 
     def forward(self, x: torch.Tensor, t: torch.Tensor):
         # x.shape = (batch_size, max_seq_length, n_loc_features)
         # loc_features = [POI, cell0, cell1, ...]
         # t.shape = (batch_size, max_seq_length, n_time_features)
         # loc_features = [hour, 6h, day, weekend, timestamp]
-        x_embedded = torch.concat(
-            [
-                embedding(x[..., level])
-                for level, embedding in enumerate(self.loc_embedding)
-            ],
-            dim=-1,
-        )
+
+        if self.loc_level:
+            x_embedded = self.loc_embedding(x[..., self.loc_level])
+        else:
+            x_embedded = torch.concat(
+                [
+                    embedding(x[..., level])
+                    for level, embedding in enumerate(self.loc_embedding)
+                ],
+                dim=-1,
+            )
 
         if self.time_embedding:
             t_embedded = torch.concat(

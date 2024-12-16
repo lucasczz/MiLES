@@ -1,22 +1,18 @@
-from run import get_config_grid, run_with_kwargs
+from run import get_config_grid, run_configs
 from torch.optim import Adam
-from multiprocessing import Pool, Manager, Process
 from pathlib import Path
-from tqdm import tqdm
 
 from src.models import BiTULER, TULHOR
-from src.data.tracker import handle_queue
 
 BASEPATH = Path(__file__).parent.parent.joinpath("reports")
 
 if __name__ == "__main__":
     seeds = [0, 1, 2, 3, 4]
-    devices = ["cuda:4", "cuda:5", "cuda:7"]
-    path = BASEPATH.joinpath("discretization_grid_new.jsonl")
-    num_workers = 2
+    devices = ["cuda:1", "cuda:2", "cuda:3", "cuda:7"]
+    path = BASEPATH.joinpath("discretization_grid.jsonl")
+    num_workers = 12
     configs = []
     for embedding_type in ["lookup_concat", "lookup_sum"]:
-        # Concat
         configs += get_config_grid(
             dataset="foursquare_NYC",
             model_cls=BiTULER,
@@ -25,6 +21,7 @@ if __name__ == "__main__":
             time_levels=1,
             optimizer_cls=Adam,
             embedding_type=embedding_type,
+            embedding_weight_factor=1,
             discretization_rows=[100, 200, 300, 400, 500],
             discretization_shape="hex",
             aggregation_mode="grow",
@@ -34,7 +31,7 @@ if __name__ == "__main__":
             n_layers=1,
             loc_embedding_factor=1,
             time_embedding_factor=1 / 16,
-            subsample=500,
+            subsample=None,
             seed=seeds,
             log_path=path,
         )
@@ -47,6 +44,7 @@ if __name__ == "__main__":
             optimizer_cls=Adam,
             discretization_rows=100,
             embedding_type=embedding_type,
+            embedding_weight_factor=1,
             discretization_shape="hex",
             aggregation_mode="grow",
             grow_factor=4,
@@ -55,7 +53,7 @@ if __name__ == "__main__":
             n_layers=1,
             loc_embedding_factor=1,
             time_embedding_factor=1 / 16,
-            subsample=500,
+            subsample=None,
             seed=seeds,
             log_path=path,
         )
@@ -69,6 +67,7 @@ if __name__ == "__main__":
         time_levels=1,
         optimizer_cls=Adam,
         embedding_type="lookup_concat",
+        embedding_weight_factor=1,
         discretization_rows=[100, 200, 300, 400, 500],
         discretization_shape="hex",
         aggregation_mode="grow",
@@ -79,7 +78,7 @@ if __name__ == "__main__":
         n_heads=16,
         loc_embedding_factor=1,
         time_embedding_factor=1 / 16,
-        subsample=500,
+        subsample=None,
         seed=seeds,
         log_path=path,
     )
@@ -93,7 +92,8 @@ if __name__ == "__main__":
         time_levels=1,
         optimizer_cls=Adam,
         embedding_type="lookup_concat",
-        discretization_rows=100,
+        embedding_weight_factor=1,
+        discretization_rows=400,
         discretization_shape="hex",
         aggregation_mode="grow",
         grow_factor=4,
@@ -104,27 +104,7 @@ if __name__ == "__main__":
         loc_embedding_factor=1,
         time_embedding_factor=1 / 16,
         seed=seeds,
-        subsample=500,
+        subsample=None,
         log_path=path,
     )
-    manager = Manager()
-    q = manager.Queue()
-
-    # Distribute accross GPUs
-    for i, entry in enumerate(configs):
-        entry["device"] = devices[i % len(devices)]
-        entry["verbose"] = False
-        entry["write_queue"] = q
-
-    pool = Pool(processes=num_workers)
-
-    # Start a dedicated process for the queue
-    queue_process = Process(target=handle_queue, args=(q, path))
-    queue_process.start()
-
-    # Use tqdm for progress bar
-    results = list(tqdm(pool.imap(run_with_kwargs, configs), total=len(configs)))
-
-    q.put("kill")
-    pool.close()
-    pool.join()
+    run_configs(configs, devices=devices, num_workers=num_workers, path=path)

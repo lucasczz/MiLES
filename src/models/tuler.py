@@ -23,6 +23,7 @@ class TULER(nn.Module):
         n_layers: int = 3,
         bidirectional: bool = True,
         dropout: float = 0,
+        loc_level: int = None,
         rnn_type: Literal["LSTM", "GRU"] = "LSTM",
         device: torch.device = "cuda:0",
         **kwargs,
@@ -44,6 +45,7 @@ class TULER(nn.Module):
             num_embeddings_time=n_times,
             embedding_dim_time=time_embedding_dim,
             weight_factor=embedding_weight_factor,
+            loc_level=loc_level,
         )
         self.rnn_type = rnn_type
 
@@ -117,6 +119,7 @@ class BiTULER(TULER):
         n_layers=3,
         dropout=0,
         rnn_type="LSTM",
+        loc_level=None,
         device="cuda:0",
     ):
         super().__init__(
@@ -133,6 +136,7 @@ class BiTULER(TULER):
             rnn_type=rnn_type,
             device=device,
             bidirectional=True,
+            loc_level=loc_level,
         )
 
 
@@ -149,6 +153,7 @@ class TULERG(TULER):
         n_hidden=256,
         n_layers=3,
         dropout=0,
+        loc_level=None,
         device="cuda:0",
     ):
         super().__init__(
@@ -165,6 +170,7 @@ class TULERG(TULER):
             rnn_type="GRU",
             device=device,
             bidirectional=False,
+            loc_level=loc_level,
         )
 
 
@@ -181,6 +187,7 @@ class TULERL(TULER):
         n_hidden=256,
         n_layers=3,
         dropout=0,
+        loc_level=None,
         device="cuda:0",
     ):
         super().__init__(
@@ -197,4 +204,5 @@ class TULERL(TULER):
             rnn_type="LSTM",
             device=device,
             bidirectional=False,
+            loc_level=loc_level,
         )

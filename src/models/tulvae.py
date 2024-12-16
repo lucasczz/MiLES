@@ -48,6 +48,7 @@ class TULVAE(nn.Module):
         beta: float = 0.5,
         subseq_steps: int = 6,
         monte_carlo_samples: int = 3,
+        loc_level: int = None,
         device: torch.device = "cuda:0",
     ):
         super().__init__()
@@ -74,6 +75,7 @@ class TULVAE(nn.Module):
             dropout=dropout,
             n_layers=n_layers,
             subseq_steps=subseq_steps,
+            loc_level=loc_level,
             device=device,
         )
         # Shared embedding layer for locations
@@ -234,6 +236,7 @@ class HierarchicalVAE(nn.Module):
         dropout: float = 0.5,
         n_layers: int = 1,
         subseq_steps: int = 6,
+        loc_level: int = None,
         device: torch.device = "cuda:0",
     ):
         super().__init__()
@@ -257,6 +260,7 @@ class HierarchicalVAE(nn.Module):
             num_embeddings_time=self.n_times,
             embedding_dim_time=time_embedding_dim,
             weight_factor=embedding_weight_factor,
+            loc_level=loc_level,
         )
 
         # LSTM Encoders and Decoder without dropout in constructor

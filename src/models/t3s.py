@@ -20,6 +20,7 @@ class T3S(nn.Module):
         time_embedding_dim: int = 128,
         n_layers: int = 2,
         n_heads: int = 16,
+        loc_level: int = None,
         device: torch.device = "cuda:0",
         **kwargs,
     ):
@@ -31,6 +32,7 @@ class T3S(nn.Module):
             num_embeddings_time=n_times,
             embedding_dim_time=time_embedding_dim,
             weight_factor=embedding_weight_factor,
+            loc_level=loc_level
         )
         self.pos_embedding = PositionalEmbedding(
             d_model=self.embedding.dim, max_len=500
