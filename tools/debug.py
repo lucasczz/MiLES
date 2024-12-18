@@ -1,6 +1,7 @@
-from src.models import BiTULER
+from src.models import BiTULER, DeepTUL
 from run import run
 from torch.optim import Adam
+
 
 
 if __name__ == "__main__":
@@ -8,18 +9,18 @@ if __name__ == "__main__":
     dataset = "foursquare_NYC"
     n_users = 400
     subsample = 5000
-    log_path = "debug_tuler.jsonl"
+    log_path = "debug_ablation.jsonl"
 
     run(
-        dataset="foursquare_NYC",
+        dataset="foursquare_TKY",
         model_cls=BiTULER,
         n_users=400,
         loc_levels=4,
-        loc_level=None,
+        loc_level=1,
         time_levels=1,
         optimizer_cls=Adam,
         embedding_type="lookup_concat",
-        discretization_rows=300,
+        discretization_rows=200,
         discretization_shape="hex",
         aggregation_mode="grow",
         grow_factor=4,
@@ -31,5 +32,5 @@ if __name__ == "__main__":
         subsample=5000,
         seed=42,
         device="cuda:0",
-        log_path="check_concat.jsonl",
+        log_path=log_path,
     )

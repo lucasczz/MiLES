@@ -116,30 +116,34 @@ class LookupConcatEmbedding(nn.Module):
     ):
         super().__init__()
         self.embedding_dim_loc = embedding_dim_loc
-        if loc_level:
-            self.loc_embedding = nn.Embedding(
-                num_embeddings=num_embeddings_loc[loc_level],
-                embedding_dim=embedding_dim_loc,
-            )
+        self.loc_level = loc_level
 
+        # Determine active location embeddings
+        if loc_level is not None and loc_level >= 0:
+            self.active_levels = [loc_level]
+        elif loc_level is not None and loc_level < 0:
+            self.active_levels = [
+                i for i in range(len(num_embeddings_loc)) if i != -loc_level - 1
+            ]
         else:
-            loc_level_weights = np.logspace(
-                0,
-                1 - len(num_embeddings_loc),
-                len(num_embeddings_loc),
-                base=weight_factor,
-            )
-            loc_level_weights /= loc_level_weights.sum()
-            loc_level_dims = (loc_level_weights * embedding_dim_loc).astype(int)
-            loc_level_dims[0] = embedding_dim_loc - loc_level_dims[1:].sum()
+            self.active_levels = list(range(len(num_embeddings_loc)))
 
-            self.loc_embedding = nn.ModuleList(
-                [
-                    nn.Embedding(num_embeddings=n, embedding_dim=l_dim)
-                    for n, l_dim in zip(num_embeddings_loc, loc_level_dims)
-                ]
-            )
+        # Compute embedding dimensions for location levels
+        loc_level_weights = np.array([weight_factor**-i for i in self.active_levels], dtype=np.float64)
+        loc_level_weights /= loc_level_weights.sum()
+        loc_level_dims = (loc_level_weights * embedding_dim_loc).astype(int)
+        loc_level_dims[0] = embedding_dim_loc - loc_level_dims[1:].sum()
 
+        self.loc_embedding = nn.ModuleList(
+            [
+                nn.Embedding(
+                    num_embeddings=num_embeddings_loc[level], embedding_dim=l_dim
+                )
+                for level, l_dim in zip(self.active_levels, loc_level_dims)
+            ]
+        )
+
+        # Compute embedding dimensions for time levels
         time_level_weights = np.logspace(
             0,
             1 - len(num_embeddings_time),
@@ -156,25 +160,25 @@ class LookupConcatEmbedding(nn.Module):
                 for n, t_dim in zip(num_embeddings_time, time_level_dims)
             ]
         )
-        self.dim = embedding_dim_loc + embedding_dim_time
-        self.loc_level = loc_level
+
+        # Update final dimension
+        self.dim = (
+            sum(loc_level_dims) + embedding_dim_time
+        )
 
     def forward(self, x: torch.Tensor, t: torch.Tensor):
         # x.shape = (batch_size, max_seq_length, n_loc_features)
         # loc_features = [POI, cell0, cell1, ...]
         # t.shape = (batch_size, max_seq_length, n_time_features)
-        # loc_features = [hour, 6h, day, weekend, timestamp]
+        # time_features = [hour, 6h, day, weekend, timestamp]
 
-        if self.loc_level:
-            x_embedded = self.loc_embedding(x[..., self.loc_level])
-        else:
-            x_embedded = torch.concat(
-                [
-                    embedding(x[..., level])
-                    for level, embedding in enumerate(self.loc_embedding)
-                ],
-                dim=-1,
-            )
+        x_embedded = torch.concat(
+            [
+                embedding(x[..., level])
+                for embedding, level in zip(self.loc_embedding, self.active_levels)
+            ],
+            dim=-1,
+        )
 
         if self.time_embedding:
             t_embedded = torch.concat(

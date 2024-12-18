@@ -1,4 +1,5 @@
 import math
+from time import time
 from typing import List
 from torch import nn
 import torch
@@ -7,6 +8,7 @@ from torch.nn.utils.rnn import pack_padded_sequence, pad_sequence
 from einops import rearrange
 
 from src.embedding import EMBEDDING_TYPES
+
 
 class DeepTUL(nn.Module):
     def __init__(
@@ -57,6 +59,8 @@ class DeepTUL(nn.Module):
             device=device,
         )
         self.clf = nn.Linear(4 * n_hidden, n_users)
+        self.counter = 0
+        self.timer = 0
         self.device = device
 
     def forward(
@@ -67,6 +71,7 @@ class DeepTUL(nn.Module):
         th: List[torch.Tensor] = [],
         uh: torch.Tensor = torch.empty(0),
     ):
+        start = time()
         c_enc = self.c_encoder(xc, tc)
         if len(uh) > 0:
             xh_cat = torch.cat(xh)
@@ -87,6 +92,11 @@ class DeepTUL(nn.Module):
         else:
             h_context = torch.zeros_like(c_enc)
 
+        self.timer += time() - start
+        self.counter += 1
+        if self.counter % 1000 == 0:
+            print("Total forward time: {:1f} seconds".format(self.timer))
+            self.timer = 0
         return self.clf(torch.cat([c_enc, h_context], dim=-1))
 
     def train_step(
@@ -114,6 +124,7 @@ class DeepTUL(nn.Module):
     ):
         logits = self(xc, tc, xh, th, uh)
         return logits
+
 
 def argunique(x: torch.Tensor, t: torch.Tensor):
     hash = t[..., 0] * (x[..., 0].max() + 1) + x[..., 0]
@@ -148,7 +159,7 @@ class CurrentEncoder(nn.Module):
         n_times,
         n_hidden: int = 64,
         embedding_type: str = "lookup_sum",
-        embedding_weight_factor: float= 2,
+        embedding_weight_factor: float = 2,
         loc_embedding_dim: int = 64,
         time_embedding_dim: int = 32,
         dropout: float = 0.6,
@@ -229,11 +240,14 @@ class HistoryEncoder(nn.Module):
         )
         self.user_embedding_dim = user_embedding_dim
         self.embedding_dim = self.embedding.dim + user_embedding_dim
+        # self.unique_counts = torch.zeros(n_locs[0], )
 
         self.user_embed = nn.Embedding(n_users + 1, user_embedding_dim, padding_idx=0)
         self.fc_xtu = nn.Linear(self.embedding_dim, 2 * n_hidden)
         self.dropout = nn.Dropout(dropout)
         self.device = device
+        self.timer = 0
+        self.counter = 0
 
     def forward(
         self,
@@ -242,7 +256,7 @@ class HistoryEncoder(nn.Module):
         u: torch.Tensor,
     ):
         # x.shape = (seq_len, n_features)
-
+        start = time()
         # Step 1: Get unique combinations of location and time IDs
         unique_idcs, inv_idcs, counts = argunique(x, t)
         x_unique = x[unique_idcs].to(self.device)
@@ -270,7 +284,11 @@ class HistoryEncoder(nn.Module):
         # Step 4: Combine embeddings
         xtu_embed = torch.cat([xt_embed, u_embed], dim=-1)
         xtu_embed = self.dropout(xtu_embed)
-
+        self.timer += time() - start
+        self.counter += 1
+        if self.counter % 1000 == 0:
+            print("History encoding time: {:.1f} seconds".format(self.timer))
+            self.timer = 0
         return F.tanh(self.fc_xtu(xtu_embed))  # shape = (n_unique, 2 *n_hidden)
 
 
@@ -287,5 +305,3 @@ def history_attention(current, history):
     # Compute attention weights using softmax
     attn = torch.softmax(logits, dim=-1)
     return attn
-
-
