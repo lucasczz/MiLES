@@ -1,5 +1,4 @@
 import math
-from time import time
 from typing import List
 from torch import nn
 import torch
@@ -59,8 +58,6 @@ class DeepTUL(nn.Module):
             device=device,
         )
         self.clf = nn.Linear(4 * n_hidden, n_users)
-        self.counter = 0
-        self.timer = 0
         self.device = device
 
     def forward(
@@ -71,7 +68,6 @@ class DeepTUL(nn.Module):
         th: List[torch.Tensor] = [],
         uh: torch.Tensor = torch.empty(0),
     ):
-        start = time()
         c_enc = self.c_encoder(xc, tc)
         if len(uh) > 0:
             xh_cat = torch.cat(xh)
@@ -91,12 +87,6 @@ class DeepTUL(nn.Module):
             # h_context.shape = (batch_size, 2 * n_hidden)
         else:
             h_context = torch.zeros_like(c_enc)
-
-        self.timer += time() - start
-        self.counter += 1
-        if self.counter % 1000 == 0:
-            print("Total forward time: {:1f} seconds".format(self.timer))
-            self.timer = 0
         return self.clf(torch.cat([c_enc, h_context], dim=-1))
 
     def train_step(
@@ -207,7 +197,6 @@ class CurrentEncoder(nn.Module):
 
         return rearrange(h[-self.n_dirs :], "dirs batch hidden -> batch (dirs hidden)")
 
-
 class HistoryEncoder(nn.Module):
     def __init__(
         self,
@@ -246,8 +235,7 @@ class HistoryEncoder(nn.Module):
         self.fc_xtu = nn.Linear(self.embedding_dim, 2 * n_hidden)
         self.dropout = nn.Dropout(dropout)
         self.device = device
-        self.timer = 0
-        self.counter = 0
+
 
     def forward(
         self,
@@ -256,8 +244,9 @@ class HistoryEncoder(nn.Module):
         u: torch.Tensor,
     ):
         # x.shape = (seq_len, n_features)
-        start = time()
         # Step 1: Get unique combinations of location and time IDs
+        x = x.to(self.device)
+        t = t.to(self.device)
         unique_idcs, inv_idcs, counts = argunique(x, t)
         x_unique = x[unique_idcs].to(self.device)
         t_unique = t[unique_idcs].to(self.device)
@@ -284,11 +273,7 @@ class HistoryEncoder(nn.Module):
         # Step 4: Combine embeddings
         xtu_embed = torch.cat([xt_embed, u_embed], dim=-1)
         xtu_embed = self.dropout(xtu_embed)
-        self.timer += time() - start
-        self.counter += 1
-        if self.counter % 1000 == 0:
-            print("History encoding time: {:.1f} seconds".format(self.timer))
-            self.timer = 0
+
         return F.tanh(self.fc_xtu(xtu_embed))  # shape = (n_unique, 2 *n_hidden)
 
 

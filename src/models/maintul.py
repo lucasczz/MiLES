@@ -24,7 +24,7 @@ class MainTUL(nn.Module):
         distill_temp: float = 10,
         dropout: float = 0.1,
         n_heads: int = 8,
-        n_layers: int = 3,
+        n_layers: int = 1,
         bidirectional: bool = False,
         augment_strategy: Literal["recent", "random"] = "random",
         n_augment: int = 16,

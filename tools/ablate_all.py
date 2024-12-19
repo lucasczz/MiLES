@@ -9,7 +9,7 @@ BASEPATH = Path(__file__).parent.parent.joinpath("reports")
 if __name__ == "__main__":
     seeds = [0, 1, 2, 3, 4]
     devices = ["cuda:1", "cuda:2", "cuda:3", "cuda:7"]
-    path = BASEPATH.joinpath("ablation_remove.jsonl")
+    path = BASEPATH.joinpath("ablation_all.jsonl")
     num_workers = 12
 
     configs = []
@@ -25,7 +25,7 @@ if __name__ == "__main__":
                 loc_level=[-1, -2, -3, -4],
                 time_levels=1,
                 optimizer_cls=Adam,
-                embedding_type="lookup_concat",
+                embedding_type="lookup_weighted_concat",
                 embedding_weight_factor=2,
                 discretization_rows=discretization_rows,
                 discretization_shape="hex",
@@ -40,7 +40,7 @@ if __name__ == "__main__":
                 seed=seeds,
                 log_path=path,
             )
-            # Test \wo embedding weighting 
+            # Test \wo embedding dim weighting 
             configs += get_config_grid(
                 dataset=dataset,
                 model_cls=model,
@@ -49,7 +49,7 @@ if __name__ == "__main__":
                 loc_level=[None],
                 time_levels=1,
                 optimizer_cls=Adam,
-                embedding_type="lookup_concat",
+                embedding_type="lookup_weighted_concat",
                 embedding_weight_factor=1,
                 discretization_rows=discretization_rows,
                 discretization_shape="hex",
@@ -64,7 +64,7 @@ if __name__ == "__main__":
                 seed=seeds,
                 log_path=path,
             )
-            # Test no time embedding
+            # Test \wo dynamic weighting
             configs += get_config_grid(
                 dataset=dataset,
                 model_cls=model,

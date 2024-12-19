@@ -17,7 +17,7 @@ class TULHOR(nn.Module):
         embedding_weight_factor: float = 2,
         loc_embedding_dim: int = 128,
         time_embedding_dim: int = 128,
-        n_layers: int = 2,
+        n_layers: int = 1,
         n_heads: int = 16,
         loc_level: int = None,
         device: torch.device = "cuda:0",

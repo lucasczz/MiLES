@@ -129,7 +129,9 @@ class LookupConcatEmbedding(nn.Module):
             self.active_levels = list(range(len(num_embeddings_loc)))
 
         # Compute embedding dimensions for location levels
-        loc_level_weights = np.array([weight_factor**-i for i in self.active_levels], dtype=np.float64)
+        loc_level_weights = np.array(
+            [weight_factor**-i for i in self.active_levels], dtype=float
+        )
         loc_level_weights /= loc_level_weights.sum()
         loc_level_dims = (loc_level_weights * embedding_dim_loc).astype(int)
         loc_level_dims[0] = embedding_dim_loc - loc_level_dims[1:].sum()
@@ -162,9 +164,7 @@ class LookupConcatEmbedding(nn.Module):
         )
 
         # Update final dimension
-        self.dim = (
-            sum(loc_level_dims) + embedding_dim_time
-        )
+        self.dim = int(sum(loc_level_dims) + embedding_dim_time)
 
     def forward(self, x: torch.Tensor, t: torch.Tensor):
         # x.shape = (batch_size, max_seq_length, n_loc_features)
@@ -176,6 +176,57 @@ class LookupConcatEmbedding(nn.Module):
             [
                 embedding(x[..., level])
                 for embedding, level in zip(self.loc_embedding, self.active_levels)
+            ],
+            dim=-1,
+        )
+
+        if self.time_embedding:
+            t_embedded = torch.concat(
+                [
+                    embedding(t[..., level])
+                    for level, embedding in enumerate(self.time_embedding)
+                ],
+                dim=-1,
+            )
+            return torch.cat([x_embedded, t_embedded], dim=-1)
+        else:
+            return x_embedded
+
+
+class LookupWeightedConcatEmbedding(LookupConcatEmbedding):
+    def __init__(
+        self,
+        num_embeddings_loc: List[int],
+        embedding_dim_loc: int,
+        num_embeddings_time: List[int] = [],
+        embedding_dim_time: int = None,
+        weight_factor: int = 2,
+        loc_level: Optional[int] = None,
+    ):
+        super().__init__(
+            num_embeddings_loc,
+            embedding_dim_loc,
+            num_embeddings_time,
+            embedding_dim_time,
+            weight_factor,
+            loc_level,
+        )
+        self.weights = torch.nn.Parameter(
+            torch.ones(len(self.active_levels), dtype=torch.float32), requires_grad=True
+        )
+
+    def forward(self, x: torch.Tensor, t: torch.Tensor):
+        # x.shape = (batch_size, max_seq_length, n_loc_features)
+        # loc_features = [POI, cell0, cell1, ...]
+        # t.shape = (batch_size, max_seq_length, n_time_features)
+        # time_features = [hour, 6h, day, weekend, timestamp]
+
+        x_embedded = torch.concat(
+            [
+                embedding(x[..., level]) * weight
+                for weight, embedding, level in zip(
+                    self.weights, self.loc_embedding, self.active_levels
+                )
             ],
             dim=-1,
         )
@@ -387,6 +438,7 @@ class RotaryEmbedding(nn.Module):
 EMBEDDING_TYPES = {
     "lookup_sum": LookupSumEmbedding,
     "lookup_concat": LookupConcatEmbedding,
+    "lookup_weighted_concat": LookupWeightedConcatEmbedding,
     "lookup_weighted_sum": LookupWeightedSumEmbedding,
     "cosine": CosineEmbedding,
 }

@@ -9,6 +9,7 @@ BASEPATH = Path(__file__).parent.parent.joinpath("reports")
 if __name__ == "__main__":
     configs = []
     devices = ["cuda:1", "cuda:2", "cuda:3", "cuda:7"]
+    # devices= ['cuda:0']
     num_workers = 12
     path = BASEPATH.joinpath("hparam_grid.jsonl")
     # configs += get_config_grid(
@@ -27,22 +28,22 @@ if __name__ == "__main__":
     #     subsample=5000,
     #     log_path=path,
     # )
-    # configs += get_config_grid(
-    #     dataset="foursquare_TKY",
-    #     model_cls=T3S,
-    #     n_users=400,
-    #     loc_levels=1,
-    #     time_levels=1,
-    #     optimizer_cls=Adam,
-    #     lr=[5e-5 * 2**i for i in range(5)],
-    #     n_hidden=[512, 1024],
-    #     n_layers=1,
-    #     loc_embedding_factor=[0.5, 1],
-    #     time_embedding_factor=[1 / 16, 1 / 8],
-    #     n_heads=[8, 16],
-    #     subsample=5000,
-    #     log_path=path,
-    # )
+    configs += get_config_grid(
+        dataset="foursquare_TKY",
+        model_cls=T3S,
+        n_users=400,
+        loc_levels=1,
+        time_levels=1,
+        optimizer_cls=Adam,
+        lr=[5e-5 * 2**i for i in range(5)],
+        n_hidden=[512, 1024],
+        n_layers=2,
+        loc_embedding_factor=[0.5, 1],
+        time_embedding_factor=[1 / 16, 1 / 8],
+        n_heads=[8, 16],
+        subsample=5000,
+        log_path=path,
+    )
     configs += get_config_grid(
         dataset="foursquare_TKY",
         model_cls=MainTUL,
@@ -52,7 +53,7 @@ if __name__ == "__main__":
         optimizer_cls=Adam,
         lr=[1e-4 * 2**i for i in range(4)],
         n_hidden=[512, 1024],
-        n_layers=1,
+        n_layers=2,
         loc_embedding_factor=[0.5, 1],
         time_embedding_factor=[1 / 16, 1 / 8],
         n_heads=[8, 16],
@@ -60,21 +61,21 @@ if __name__ == "__main__":
         subsample=5000,
         log_path=path,
     )
-    configs += get_config_grid(
-        dataset="foursquare_TKY",
-        model_cls=BiTULER,
-        n_users=400,
-        loc_levels=1,
-        time_levels=1,
-        optimizer_cls=Adam,
-        lr=[1e-4 * 2**i for i in range(4)],
-        n_hidden=[512, 1024],
-        n_layers=[1, 2],
-        loc_embedding_factor=[0.5, 1],
-        time_embedding_factor=[1 / 16, 1 / 8],
-        subsample=5000,
-        log_path=path,
-    )
+    # configs += get_config_grid(
+    #     dataset="foursquare_TKY",
+    #     model_cls=BiTULER,
+    #     n_users=400,
+    #     loc_levels=1,
+    #     time_levels=1,
+    #     optimizer_cls=Adam,
+    #     lr=[1e-4 * 2**i for i in range(4)],
+    #     n_hidden=[512, 1024],
+    #     n_layers=[1, 2],
+    #     loc_embedding_factor=[0.5, 1],
+    #     time_embedding_factor=[1 / 16, 1 / 8],
+    #     subsample=5000,
+    #     log_path=path,
+    # )
     configs += get_config_grid(
         dataset="foursquare_TKY",
         model_cls=TULVAE,
@@ -84,27 +85,27 @@ if __name__ == "__main__":
         optimizer_cls=Adam,
         lr=[1e-4 * 2**i for i in range(4)],
         n_hidden=[512, 1024],
-        n_layers=1,
+        n_layers=2,
         loc_embedding_factor=[0.5, 1],
         time_embedding_factor=[1 / 16, 1 / 8],
         latent_dim=[50, 100],
         subsample=5000,
         log_path=path,
     )
-    configs += get_config_grid(
-        dataset="foursquare_TKY",
-        model_cls=DeepTUL,
-        n_users=400,
-        loc_levels=1,
-        time_levels=1,
-        optimizer_cls=Adam,
-        lr=[1e-4 * 2**i for i in range(4)],
-        n_hidden=[512, 1024],
-        n_layers=[1, 2],
-        loc_embedding_factor=[0.5, 1],
-        time_embedding_factor=[1 / 16, 1 / 8],
-        subsample=5000,
-        log_path=path,
-    )
+    # configs += get_config_grid(
+    #     dataset="foursquare_TKY",
+    #     model_cls=DeepTUL,
+    #     n_users=400,
+    #     loc_levels=1,
+    #     time_levels=1,
+    #     optimizer_cls=Adam,
+    #     lr=[1e-4 * 2**i for i in range(4)],
+    #     n_hidden=[512, 1024],
+    #     n_layers=[1, 2],
+    #     loc_embedding_factor=[0.5, 1],
+    #     time_embedding_factor=[1 / 16, 1 / 8],
+    #     subsample=5000,
+    #     log_path=path,
+    # )
 
     run_configs(configs, devices=devices, num_workers=num_workers, path=path)

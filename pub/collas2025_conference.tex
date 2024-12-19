@@ -94,7 +94,7 @@ RNN-based approaches
 Transformer-based approaches
 - T3S: uses a transformer that encodes the sequence of visited grid cells which is concatenated with an LSTM embedding of the coordinate sequence
 - TULHOR: uses a modified BERT model that is first pre-trained on sequences of check-ins and grid cells in between each check-in and subsequently finetuned for TUL
-- MainTUL: makes use of a transformer and an RNN, which both receive either a trajectory augmented with historical trajectories of the same user or only the trajectory to be classified itself. The transformer outputs are distilled into the RNN.
+- MainTUL: makes use of an RNN and a transformer encoder, which receive the input trajectory and a version of the trajectory augmented with historical data of the same user respectively. The encoders also receive the sequence of POI categories. The transformer outputs are distilled into the RNN.
 
 
 

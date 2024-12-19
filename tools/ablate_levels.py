@@ -9,7 +9,7 @@ BASEPATH = Path(__file__).parent.parent.joinpath("reports")
 if __name__ == "__main__":
     seeds = [0, 1, 2, 3, 4]
     devices = ["cuda:1", "cuda:2", "cuda:3", "cuda:7"]
-    path = BASEPATH.joinpath("ablation_remove.jsonl")
+    path = BASEPATH.joinpath("ablation_levels.jsonl")
     num_workers = 12
 
     configs = []
