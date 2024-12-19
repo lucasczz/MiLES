@@ -8,8 +8,8 @@ BASEPATH = Path(__file__).parent.parent.joinpath("reports")
 
 if __name__ == "__main__":
     seeds = [0, 1, 2, 3, 4]
-    devices = ["cuda:1", "cuda:2", "cuda:3", "cuda:7"]
-    path = BASEPATH.joinpath("all_models_new.jsonl")
+    devices = ["cuda:4", "cuda:5", "cuda:6", "cuda:7"]
+    path = BASEPATH.joinpath("all_models.jsonl")
     num_workers = 12
     lrs = {T3S: 1e-4, TULHOR: 1e-4, DeepTUL: 4e-4}
 
@@ -41,7 +41,7 @@ if __name__ == "__main__":
                 discretization_rows=discretization_rows,
                 discretization_shape="hex",
                 aggregation_mode="grow",
-                grow_factor=4,
+                grow_factor=2,
                 lr=lr,
                 n_hidden=1024,
                 n_layers=n_layers,
@@ -63,7 +63,7 @@ if __name__ == "__main__":
                 discretization_rows=discretization_rows,
                 discretization_shape="hex",
                 aggregation_mode="grow",
-                grow_factor=4,
+                grow_factor=2,
                 lr=lr,
                 n_hidden=1024,
                 n_layers=n_layers,

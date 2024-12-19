@@ -185,4 +185,7 @@ def run(
 
 
 def run_with_kwargs(kwargs):
-    return run(**kwargs)
+    try:
+        return run(**kwargs)
+    except Exception as e:
+        print("Error: ", kwargs)

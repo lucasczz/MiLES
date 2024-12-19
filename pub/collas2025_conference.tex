@@ -104,6 +104,18 @@ Transformer-based approaches
 
 \section{Experiments}
 
+We implement all models using PyTorch and tune the learning rate, number of layers and model size for each approach on the initial 5000 trajectories. For approach-specific hyperparameters, we use the authors suggested default values. 
+In terms of data modalities, we use only POIs, coordinates and timestamps. 
+For this reason we, omit the model components in MainTUL and TULHOR that require additional data like POI-categories or mobility flows. 
+We use the previously described, unified approach of multi-level lookup-table embeddings that are learned end-to-end. 
+As data sources, we select the commonly used public trajectory datasets Geolife, Foursquare-NYC and Foursquare-TKY which we pre-process according to \textcite{chenMutualDistillationLearning2022a} by splitting each trajectory into sub-trajectories with a maximum length of 24 hours for Foursquare-NYC and TKY and 3 hours for Geolife and select the most active users.
+For more information on the selected datasets, refer to %TODO: place ref. 
+
+
+
+
+
+
 \section{Conclusion}
 
 
