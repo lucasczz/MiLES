@@ -1,4 +1,4 @@
-from src.models import BiTULER, DeepTUL
+from src.models import BiTULER, DeepTUL, MainTUL
 from run import run
 from torch.optim import Adam
 
@@ -11,9 +11,9 @@ if __name__ == "__main__":
     log_path = "debug_concat.jsonl"
 
     run(
-        dataset="foursquare_NYC",
-        model_cls=BiTULER,
-        n_users=400,
+        dataset="foursquare_TKY",
+        model_cls=MainTUL,
+        n_users=800,
         loc_levels=4,
         loc_level=None,
         time_levels=1,
@@ -30,7 +30,7 @@ if __name__ == "__main__":
         loc_embedding_factor=1,
         time_embedding_factor=1 / 16,
         subsample=None,
-        seed=42,
-        device="cuda:0",
+        seed=2,
+        device="cuda:5",
         log_path=log_path,
     )

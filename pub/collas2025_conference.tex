@@ -2,6 +2,7 @@
 \documentclass{article} % For LaTeX2e
 \usepackage{collas2025_conference,times}
 \usepackage{easyReview}
+\usepackage{booktabs, multicol, multirow}
 
 % Optional math commands from https://github.com/goodfeli/dlbook_notation.
 \input{math_commands.tex}
@@ -78,12 +79,23 @@ Address \\
 
 \section{Introduction}
 
-
+- mobility data has become abundant thanks to the proliferation of devices supporting location services 
+- this has spawned a variety of machine learning tasks, specifically catered to make use of this type of data
+- one such task is Trajectory User Linking (TUL), introduced by \citet{gaoIdentifyingHumanMobility2017}
+- originally TUL was proposed with the specific application in  of linking users of location based social networks to unlabeled trajectories \cite{gaoIdentifyingHumanMobility2017}  
+- TUL has many more practical applications in areas such as ride-hailing, logistics, or law-enforcement make use 
+- Previous works have achieved remarkable results using recurrent neural networks and more recently with transformer-based approaches 
+- These works are limited to conventional batch-learning where all training data is available at once. 
+- In many real-world applications, data is generated continously in the form of data streams. 
+- When establishing a new location-based service i.e. the amount of initial data available for training may be small or zero. 
+- Furthermore, real-world data is often affected by shifts in their distributions in the form of concept drift. 
+- For mobility data, such shifts may occur due to seasonality, openings or closures of points of interest, changes in user activity 
+- Therefore, it can be beneficial to 
 
 \section{Related Work}
 
-Classical approaches 
--longest common sub-trajectory
+Conventional machine learning approaches 
+-longest common subsequence: uses the class of the trajectory with the longest common subsequence as the input trajectory as the prediction
 -SVM, logistic regression + bag of words
 
 RNN-based approaches
@@ -100,18 +112,38 @@ Transformer-based approaches
 
 \section{Preliminaries}
 
+\subsection{Trajectory User Linking}
+\subsection{Online Learning}
+
+\subsection{Trajectory-User Linking}
+
+\subsection{Online Machine Learning}
+
 \section{Approach}
 
 \section{Experiments}
 
-We implement all models using PyTorch and tune the learning rate, number of layers and model size for each approach on the initial 5000 trajectories. For approach-specific hyperparameters, we use the authors suggested default values. 
+As data sources, we select the commonly used public trajectory datasets Geolife, Foursquare-NYC and Foursquare-TKY which we pre-process according to \citet{chenMutualDistillationLearning2022a} by splitting each trajectory into sub-trajectories with a maximum length of 24 hours for Foursquare-NYC and TKY and 3 hours for Geolife and select the most active users.
+For more information on the selected datasets, refer to Table~\ref{tab:datasets}. 
+We implement all models using PyTorch and tune the learning rate, number of layers and model size for each approach on the first 5000 trajectories of Foursquare-TKY. 
+For approach-specific hyperparameters, we use the authors suggested default values. 
 In terms of data modalities, we use only POIs, coordinates and timestamps. 
-For this reason we, omit the model components in MainTUL and TULHOR that require additional data like POI-categories or mobility flows. 
+For this reason, we omit the model components in MainTUL and TULHOR that require additional data like POI-categories or mobility flows. 
+To allow the evaluation of MainTUL and DeepTUL, which require historical data as additional inputs, we maintain a buffer of the most recent 1000 trajectories during each run. 
 We use the previously described, unified approach of multi-level lookup-table embeddings that are learned end-to-end. 
-As data sources, we select the commonly used public trajectory datasets Geolife, Foursquare-NYC and Foursquare-TKY which we pre-process according to \textcite{chenMutualDistillationLearning2022a} by splitting each trajectory into sub-trajectories with a maximum length of 24 hours for Foursquare-NYC and TKY and 3 hours for Geolife and select the most active users.
-For more information on the selected datasets, refer to %TODO: place ref. 
 
-
+\begin{table}[h]
+    \centering
+\caption{Datasets used for experimental evaluation.}
+\label{tab:datasets}
+\begin{tabular}{@{}lrrrrr@{}}
+\toprule
+Dataset        & \# Users & \# Trajectories & \# Check-Ins & \# POIs & Timespan  \\ \midrule
+Foursquare-NYC & 800      & 61,218           & 196,435       & 34,383   & 10 months \\
+Foursquare-TKY & 800      & 70,007           & 324,564       & 38,212   & 10 months \\
+Geolife        & 150      & 25,611           & 1,284,208      & 0       & 64 months \\ \bottomrule
+\end{tabular}
+\end{table}
 
 
 

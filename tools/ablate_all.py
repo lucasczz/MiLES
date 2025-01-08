@@ -15,7 +15,7 @@ if __name__ == "__main__":
     configs = []
     for model, lr in [(BiTULER, 2e-4), (TULHOR, 1e-4)]:
         for dataset in ["foursquare_NYC", "foursquare_TKY", "geolife"]:
-            n_users = 150 if dataset == "geolife" else 800
+            n_users = 75 if dataset == "geolife" else 400
             discretization_rows = 800 if dataset == "geolife" else 200
             configs += get_config_grid(
                 dataset=dataset,

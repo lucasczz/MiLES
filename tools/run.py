@@ -1,4 +1,5 @@
 from collections import deque
+from copy import copy, deepcopy
 from itertools import product
 from typing import Dict, Optional, List
 import torch
@@ -6,6 +7,7 @@ from tqdm import tqdm
 from torch.optim import Adam
 import multiprocessing as mp
 import pathlib
+import pandas as pd
 
 from src.data.tracker import JSONTracker, handle_queue
 from src.data.utils import get_dataloader
@@ -34,6 +36,17 @@ def get_config_grid(search_space=None, fixed_kwargs=None, **kwargs):
         ]
         results.extend(configs)
     return results
+
+
+def get_missing_configs(configs, path_done, relevant_params):
+    df_planned = pd.DataFrame.from_records(configs)
+    df_planned["model_cls"] = df_planned["model_cls"].apply(lambda x: x.__name__)
+    df_done = pd.read_json(path_done, orient="records", lines=True)
+
+    # Match on specific columns
+    diff_df = df_planned.merge(df_done, on=relevant_params, how="left", indicator=True)
+    df_missing = diff_df[diff_df["_merge"] == "left_only"].drop("_merge", axis=1)
+    return [configs[i] for i in df_missing.index]
 
 
 def run_configs(
@@ -189,3 +202,4 @@ def run_with_kwargs(kwargs):
         return run(**kwargs)
     except Exception as e:
         print("Error: ", kwargs)
+        print(e)
