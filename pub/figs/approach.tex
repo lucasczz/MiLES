@@ -1,57 +1,250 @@
 \documentclass{standalone}
 \usepackage{tikz}
 \usepackage{tikz-3dplot}
+\usetikzlibrary{arrows.meta} 
+\usetikzlibrary{calc}
+\usetikzlibrary{positioning}
 
 \begin{document}
+
+% Declare axial_round function
+\pgfmathdeclarefunction{axial_round_x}{2}{%
+    \pgfmathparse{round(#1)} \let\xgrid\pgfmathresult
+    \pgfmathparse{round(#2)} \let\ygrid\pgfmathresult
+    \pgfmathparse{#1 - \xgrid} \let\xrem\pgfmathresult
+    \pgfmathparse{#2 - \ygrid} \let\yrem\pgfmathresult
+    \pgfmathparse{round(\xrem + 0.5 * \yrem) * (\xrem * \xrem >= \yrem * \yrem)} \let\dx\pgfmathresult
+    \pgfmathparse{\xgrid + \dx}%
+}
+
+\pgfmathdeclarefunction{axial_round_y}{2}{%
+    \pgfmathparse{round(#1)} \let\xgrid\pgfmathresult
+    \pgfmathparse{round(#2)} \let\ygrid\pgfmathresult
+    \pgfmathparse{#1 - \xgrid} \let\xrem\pgfmathresult
+    \pgfmathparse{#2 - \ygrid} \let\yrem\pgfmathresult
+    \pgfmathparse{round(\yrem + 0.5 * \xrem) * (\xrem * \xrem < \yrem * \yrem)} \let\dy\pgfmathresult
+    \pgfmathparse{\ygrid + \dy}%
+}
+
+% Declare pixel_to_flat_hex function
+\pgfmathdeclarefunction{pixel_to_flat_hex_x}{3}{%
+    \pgfmathparse{(2 / 3 * (#1 - #3)) / #3} \let\q\pgfmathresult
+    \pgfmathparse{(-1 / 3 * (#1 - #3) + sqrt(3) / 3 * (#2- sqrt(3) / 2 * #3)) / #3} \let\r\pgfmathresult
+    \pgfmathparse{axial_round_x(\q, \r)}%
+}
+
+\pgfmathdeclarefunction{pixel_to_flat_hex_y}{3}{%
+    \pgfmathparse{(2 / 3 * (#1 - #3)) / #3} \let\q\pgfmathresult
+    \pgfmathparse{(-1 / 3 * (#1 - #3) + sqrt(3) / 3 * (#2- sqrt(3) / 2 * #3)) / #3} \let\r\pgfmathresult
+    \pgfmathparse{axial_round_y(\q, \r)}%
+}
+
+\pgfmathdeclarefunction{axial_to_oddq_row}{2}{%
+    \pgfmathparse{#2 + (#1 - mod(#1, 2)) / 2} % Row calculation
+}
 
 \tdplotsetmaincoords{70}{20} % Set viewing angle
 
 \begin{tikzpicture}[tdplot_main_coords]
 
-% Grid and image configuration
-\def\hexsize{1} % Radius of a single hexagon
-\def\xsteps{6}   % Number of hexagons in the x direction
-\def\ysteps{6}   % Number of hexagons in the y direction
-\pgfmathsetmacro{\gridwidth}{\xsteps * \hexsize * 1.5 + 2 * \hexsize}
-\pgfmathsetmacro{\gridheight}{\ysteps * \hexsize * sqrt(3) + 1.5 * \hexsize * sqrt(3)}
-
-% First node with the map scaled to match the grid dimensions
-\node[canvas is xy plane at z=0, draw, fill=white, anchor=south west] at (0, 0) 
-{\includegraphics[width=\gridwidth cm, height=\gridheight cm]{map.png}};
-
 % Viridis colormap as RGB triples
 \def\viridisColors{{"0.267004 0.004874 0.329415", "0.127568 0.566949 0.550556", 
                     "0.369214 0.788888 0.382914", "0.993248 0.906157 0.143936"}}
 
+% Define check-in locations as separate x and y coordinate lists
+\def\x{8.1}
+\def\y{5}
+
+% Define table parameters
+\newcommand{\tableWidth}{2}
+\newcommand{\tableSpacing}{1.5}
+\newcommand{\nColumns}{4}
+
+% Grid and image configuration
+\def\hexsize{1} % Radius of a single hexagon
+\def\xsteps{6}   % Number of hexagons in the x direction
+\def\ysteps{6}   % Number of hexagons in the y direction
+\pgfmathsetmacro{\gridWidth}{\xsteps * \hexsize * 1.5 + 2 * \hexsize}
+\pgfmathsetmacro{\gridHeight}{\ysteps * \hexsize * sqrt(3) + 1.5 * \hexsize * sqrt(3) - 0.04}
+
+% First node with the map scaled to match the grid dimensions
+
+\node[canvas is xy plane at z=0, draw, fill=white, anchor=south west] at (0, 0) 
+{\includegraphics[width=\gridWidth cm, height=\gridHeight cm]{map.png}};
+
+\coordinate (catEmbedding) at ({\gridWidth + 2 * \tableSpacing + \tableWidth}, {\gridHeight * 17 / 18 / 2}, 0);
+
+% Add Level 0 label on the xz plane below catEmbedding
+\begin{scope}[canvas is xz plane at y = {\gridHeight * 17 / 18 / 2}]
+    \node [transform shape, anchor=north west] at (catEmbedding |- {{0, 0}}) {\Large Level 0};
+\end{scope}
+
+\begin{scope}[canvas is xy plane at z=0]
+    \pgfmathsetmacro{\selRow}{9}
+    \pgfmathsetmacro{\nrows}{18}
+    \pgfmathsetmacro{\rowHeight}{\gridHeight / 18}
+    \pgfmathsetmacro{\tableHeight}{\rowHeight * \nrows}
+    \pgfmathsetmacro{\columnWidth}{\tableWidth / (\nColumns+1)}
+    \coordinate (tbase) at ({\gridWidth + \tableSpacing}, {(\gridHeight - \tableHeight) / 2});
+
+    % Background rectangle for table - now centered
+    \filldraw[draw=black, fill=gray, fill opacity=0.75] 
+        (tbase) rectangle ++ (\tableWidth, \tableHeight);
+
+    % Draw vertical grid lines
+    \foreach \i in {1,...,\nColumns} {
+        \draw[white] (tbase) ++ ({\i*\columnWidth}, 0) 
+            -- ++ (0, \tableHeight);
+    }
+
+    % Draw grid lines
+    \foreach \i in {0,...,\nrows} {
+        \draw[black] (tbase) ++ (0, {\i*\rowHeight}) 
+            -- ++ (\tableWidth, 0);
+    }
+
+    % Highlight selected row in embedding table
+    \pgfmathsetmacro{\selRowY}{\selRow * \rowHeight}
+    \coordinate (selRowLeft) at ($ (tbase) + (0, {\selRowY + 0.5*\rowHeight}) $);
+    \draw[red, thick] 
+        (tbase) ++ (0, \selRowY) rectangle ++ (\tableWidth, \rowHeight);
+
+    % Mark check-in locations on the top plane
+    \draw[-Latex, red, thick] (\x, \y) -- (selRowLeft);
+
+    % Draw box around catEmbedding
+    \draw[black] (catEmbedding) rectangle ++ ({4*\tableWidth}, \rowHeight);
+
+    % Draw gray catEmbedding part
+    \fill[gray, opacity=0.75] (catEmbedding) rectangle ++ (\tableWidth, \rowHeight);
+  
+
+    % Draw arrow to catEmbedding
+    \draw[-Latex, red, thick] (selRowLeft) ++ (\tableWidth, 0) -- ($ (catEmbedding) + (0, {\rowHeight*0.5}) $);
+
+    % Draw catEmbedding vertical lines
+    \foreach \i in {1,...,\nColumns} {
+        \draw[white] (catEmbedding) ++ ({\i*\columnWidth}, 0) 
+            -- ++ (0, \tableHeight);
+    }
+
+\end{scope}
+
+
+
 % Loop to draw multiple hexagonal grids
-\foreach \i/\z [count=\n from 0] in {1/3,2/6,3/9} {
+\foreach \z/\steps/\selRow [count=\n from 1] in {3/18/3,6/12/5,9/6/2} {
+
+
+    % Mark check-in locations at different z-levels
+    \pgfmathsetmacro{\zminus}{\z - 3}
+    % Draw arrows
+    \draw[-, color=red] (\x,\y,\zminus) -- ++ (0, 0, 3);
+    \fill[red] (\x,\y,\zminus) circle (.125);
+
     % Select the color
-    \pgfmathparse{\viridisColors[\i]};
+    \pgfmathparse{\viridisColors[\n]};
     \definecolor{currentColor}{rgb}{\pgfmathresult};
-    
-    \pgfmathsetmacro{\xsteps}{6 + \z}   % Adjust grid size based on z-coordinate
-    \pgfmathsetmacro{\ysteps}{6 + \z}   % Adjust grid size based on z-coordinate
-    \pgfmathsetmacro{\hexsize}{\gridwidth / (1.5 * \xsteps + 2)}
+
+    % Draw concatenated embedding
+    % \fill
+
+    \pgfmathsetmacro{\hexsize}{\gridWidth / (1.5 * \steps + 2)}
 
     \begin{scope}[canvas is xy plane at z=\z]
         % Draw rectangle (background for the grid)
-        \filldraw[draw=black, fill=currentColor, fill opacity=0.8] (0, 0) rectangle ++ (\gridwidth, \gridheight);
+        \filldraw[draw=black, fill=currentColor, fill opacity=0.75] (0, 0) rectangle ++ (\gridWidth, \gridHeight);
         
         % Loop to create hexagonal grid
-        \foreach \x in {0,...,\xsteps} {
-            \foreach \y in {0,...,\ysteps} {
+        \foreach \x in {0,...,\steps} {
+            \foreach \y in {0,...,\steps} {
                 % Offset every second row to create a hexagonal grid
                 \pgfmathsetmacro{\xoffset}{(\x + 1) * \hexsize * 1.5}
                 \pgfmathsetmacro{\yoffset}{\y * \hexsize * sqrt(3) + mod(\x, 2) * \hexsize * sqrt(3) / 2}
                 
                 % Draw hexagon
-                \draw[black] 
+                \draw[darkgray] 
                     (\xoffset, \yoffset) -- ++(60:\hexsize) -- ++(120:\hexsize) 
                     -- ++(180:\hexsize) -- ++(240:\hexsize) -- ++(300:\hexsize) -- cycle;
             }
         }
+        % Draw embedding table
+                
+        % Calculate consistent row height based on maximum steps (18)
+        \pgfmathsetmacro{\nrows}{round(\steps*0.8)}
+        \pgfmathsetmacro{\rowHeight}{\gridHeight / 18}
+        \pgfmathsetmacro{\tableHeight}{\rowHeight * \nrows}
+        \pgfmathsetmacro{\columnWidth}{\tableWidth / (\nColumns+1)}
+
+        \coordinate (tbase) at ({\gridWidth + \tableSpacing}, {(\gridHeight - \tableHeight) / 2});
+
+        % Background rectangle for table - now centered
+        \filldraw[draw=black, fill=currentColor, fill opacity=0.75] 
+            (tbase) rectangle ++ (\tableWidth, \tableHeight);
+
+        % Draw vertical grid lines
+        \foreach \i in {1,...,\nColumns} {
+            \draw[white] (tbase) ++ ({\i*\columnWidth}, 0) 
+                -- ++ (0, \tableHeight);
+        }
+
+        % Draw grid lines
+        \foreach \i in {0,...,\nrows} {
+            \draw[black] (tbase) ++ (0, {\i*\rowHeight}) 
+                -- ++ (\tableWidth, 0);
+        }
+
+        % Highlight selected row in embedding table
+        \pgfmathsetmacro{\selRowY}{\selRow * \rowHeight}
+        \coordinate (selRowLeft) at ($ (tbase) + (0, {\selRowY + 0.5*\rowHeight}) $);
+        \draw[red, thick] 
+            (tbase) ++ (0, \selRowY) rectangle ++ (\tableWidth, \rowHeight);
+
+        % Highlight visited hexagons
+            % Compute hex coordinates
+            \pgfmathparse{pixel_to_flat_hex_x(\x, \y, \hexsize)} \let\hexcoordx\pgfmathresult
+            \pgfmathparse{pixel_to_flat_hex_y(\x, \y, \hexsize)} \let\hexcoordy\pgfmathresult
+
+            \pgfmathparse{axial_to_oddq_row(\hexcoordx, \hexcoordy)} \let\hexcoordy\pgfmathresult
+
+            \pgfmathsetmacro{\xoffset}{(\hexcoordx + 1) * \hexsize * 1.5}
+            \pgfmathsetmacro{\yoffset}{\hexcoordy * \hexsize * sqrt(3) + mod(\hexcoordx, 2) * \hexsize * sqrt(3) / 2}
+            
+            % Draw hexagon
+            \draw[red, thick] 
+                (\xoffset, \yoffset) -- ++(60:\hexsize) -- ++(120:\hexsize) 
+                -- ++(180:\hexsize) -- ++(240:\hexsize) -- ++(300:\hexsize) -- cycle;
+
+            % Add red arrow from first hexagon only
+                % Draw arrow to middle of right edge of highlighted row
+                
+            \draw[-Latex, red, thick] 
+                (\xoffset, \yoffset) ++ (60:\hexsize) 
+                -- (selRowLeft);
+        % Draw arrow to catEmbedding
+        \coordinate (currentCatEmbedding) at ($ (catEmbedding) + ({\tableWidth*\n},0)$);
+        \draw[-Latex, red, thick] (selRowLeft) ++ (\tableWidth, 0) -- ($ (currentCatEmbedding) + (0, {\rowHeight*0.5}) $);
+
+        % Draw catEmbedding part
+        \fill[currentColor, opacity=0.75] (currentCatEmbedding) rectangle ++ (\tableWidth, \rowHeight);
+
+        % Draw catEmbedding vertical lines
+        \foreach \i in {1,...,\nColumns} {
+            \draw[white] (currentCatEmbedding) ++ ({\i*\columnWidth}, 0) 
+                -- ++ (0, \tableHeight);
+        }
+        
+    \end{scope}
+
+    % Add Level 0 label on the xz plane below catEmbedding
+    \begin{scope}[canvas is xz plane at y = {\gridHeight * 17 / 18 / 2}]
+        \node [transform shape, anchor=north west] at (currentCatEmbedding |- {{0, 0}}) {\Large Level \pgfmathprint{\n}};
     \end{scope}
 }
+
+% Mark check-in locations on the top plane
+\fill[red] (\x,\y, 9) circle (.125);
+
 
 \end{tikzpicture}
 
