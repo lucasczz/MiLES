@@ -9,7 +9,7 @@ import multiprocessing as mp
 import pathlib
 import pandas as pd
 
-from src.data.tracker import JSONTracker, handle_queue
+from src.data.tracker import JSONTracker, handle_queue, EmbeddingWeightTracker
 from src.data.utils import get_dataloader
 
 
@@ -103,6 +103,7 @@ def run(
     loc_level: int = None,
     seed: int = 42,
     write_queue=None,
+    track_embeddings: bool = False,
     **model_params: Dict,
 ):
     torch.set_float32_matmul_precision("high")
@@ -167,9 +168,17 @@ def run(
         seed=seed,
         **model_params,
     )
-    tracker = JSONTracker(
-        save_path=log_path, parameters=log_info, write_queue=write_queue
-    )
+    if track_embeddings:
+        tracker = JSONTracker(
+            save_path=log_path,
+            parameters=log_info,
+            write_queue=write_queue,
+            module=model,
+        )
+    else:
+        tracker = JSONTracker(
+            save_path=log_path, parameters=log_info, write_queue=write_queue
+        )
     if verbose:
         iterator = tqdm(dataloader, leave=False)
     else:

@@ -45,7 +45,10 @@
 
 \tdplotsetmaincoords{70}{20} % Set viewing angle
 
-\begin{tikzpicture}[tdplot_main_coords]
+\begin{tikzpicture}[tdplot_main_coords, cross/.style={path picture={ 
+  \draw[black]
+(path picture bounding box.south east) -- (path picture bounding box.north west) (path picture bounding box.south west) -- (path picture bounding box.north east);
+}}]
 
 % Viridis colormap as RGB triples
 \def\viridisColors{{"0.267004 0.004874 0.329415", "0.127568 0.566949 0.550556", 
@@ -72,7 +75,7 @@
 \node[canvas is xy plane at z=0, draw, fill=white, anchor=south west] at (0, 0) 
 {\includegraphics[width=\gridWidth cm, height=\gridHeight cm]{map.png}};
 
-\coordinate (catEmbedding) at ({\gridWidth + 2 * \tableSpacing + \tableWidth}, {\gridHeight * 17 / 18 / 2}, 0);
+\coordinate (catEmbedding) at ({\gridWidth + 3 * \tableSpacing + \tableWidth}, {\gridHeight * 17 / 18 / 2}, 0);
 
 % Add Level 0 label on the xz plane below catEmbedding
 \begin{scope}[canvas is xz plane at y = {\gridHeight * 17 / 18 / 2}]
@@ -87,8 +90,11 @@
     \pgfmathsetmacro{\columnWidth}{\tableWidth / (\nColumns+1)}
     \coordinate (tbase) at ({\gridWidth + \tableSpacing}, {(\gridHeight - \tableHeight) / 2});
 
+
+    \pgfmathparse{\viridisColors[0]};
+    \definecolor{currentColor}{rgb}{\pgfmathresult};
     % Background rectangle for table - now centered
-    \filldraw[draw=black, fill=gray, fill opacity=0.75] 
+    \filldraw[draw=black, fill=currentColor, fill opacity=0.75] 
         (tbase) rectangle ++ (\tableWidth, \tableHeight);
 
     % Draw vertical grid lines
@@ -115,12 +121,25 @@
     % Draw box around catEmbedding
     \draw[black] (catEmbedding) rectangle ++ ({4*\tableWidth}, \rowHeight);
 
-    % Draw gray catEmbedding part
-    \fill[gray, opacity=0.75] (catEmbedding) rectangle ++ (\tableWidth, \rowHeight);
+    % Draw blue catEmbedding part
+    \fill[currentColor, opacity=0.75] (catEmbedding) rectangle ++ (\tableWidth, \rowHeight);
   
 
-    % Draw arrow to catEmbedding
-    \draw[-Latex, red, thick] (selRowLeft) ++ (\tableWidth, 0) -- ($ (catEmbedding) + (0, {\rowHeight*0.5}) $);
+    % Draw arrow to catEmbedding with intermediate circle node
+    \coordinate (circlePos) at ($ (selRowLeft) + (\tableWidth + 1.25*\tableSpacing, 0) $);
+    \node [draw,circle,cross, minimum width=12 pt] (crossNode) at (circlePos) {};
+
+    % Split arrow into two segments
+    \draw[-Latex, red, thick] 
+        (selRowLeft) ++ (\tableWidth, 0) -- 
+        (crossNode.west);
+    \draw[-Latex, red, thick] 
+        (crossNode.east) -- 
+        ($ (catEmbedding) + (0, {\rowHeight*0.5}) $);
+        
+    % Add w_0 label pointing to circle
+    \node [above=.5*\tableSpacing] (w0) at (crossNode) {\LARGE $w_0$};
+    \draw[-Latex, thick, red] (w0) -- (crossNode);
 
     % Draw catEmbedding vertical lines
     \foreach \i in {1,...,\nColumns} {
@@ -133,7 +152,7 @@
 
 
 % Loop to draw multiple hexagonal grids
-\foreach \z/\steps/\selRow [count=\n from 1] in {3/18/3,6/12/5,9/6/2} {
+\foreach \z/\steps/\selRow [count=\n from 1] in {3/18/7,6/12/5,9/6/2} {
 
 
     % Mark check-in locations at different z-levels
@@ -221,9 +240,26 @@
             \draw[-Latex, red, thick] 
                 (\xoffset, \yoffset) ++ (60:\hexsize) 
                 -- (selRowLeft);
-        % Draw arrow to catEmbedding
+
+        % % Draw arrow to catEmbedding
         \coordinate (currentCatEmbedding) at ($ (catEmbedding) + ({\tableWidth*\n},0)$);
-        \draw[-Latex, red, thick] (selRowLeft) ++ (\tableWidth, 0) -- ($ (currentCatEmbedding) + (0, {\rowHeight*0.5}) $);
+        % \draw[-Latex, red, thick] (selRowLeft) ++ (\tableWidth, 0) -- ($ (currentCatEmbedding) + (0, {\rowHeight*0.5}) $);
+
+        % Draw arrow to catEmbedding with intermediate circle node
+        \coordinate (circlePos) at ($ (selRowLeft) + (\tableWidth + 1.25*\tableSpacing, 0) $);
+        \node [draw,circle,cross, minimum width=12 pt] (crossNode) at (circlePos) {};
+
+        % Split arrow into two segments
+        \draw[-Latex, red, thick] 
+            (selRowLeft) ++ (\tableWidth, 0) -- 
+            (crossNode.west);
+        \draw[-Latex, red, thick] 
+            (crossNode.east) -- 
+            ($ (currentCatEmbedding) + (0, {\rowHeight*0.5}) $);
+            
+        % Add w_0 label pointing to circle
+        \node [above=.5*\tableSpacing] (w0) at (crossNode) {\LARGE $w_{\pgfmathprint{\n}}$};
+        \draw[-Latex, thick, red] (w0) -- (crossNode);
 
         % Draw catEmbedding part
         \fill[currentColor, opacity=0.75] (currentCatEmbedding) rectangle ++ (\tableWidth, \rowHeight);
