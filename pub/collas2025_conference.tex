@@ -3,6 +3,17 @@
 \usepackage{collas2025_conference,times}
 \usepackage{easyReview}
 \usepackage{booktabs, multicol, multirow}
+\usepackage{colortbl}
+\usepackage{tikz}
+\usepackage{tikz-3dplot}
+\usetikzlibrary{arrows.meta} 
+\usetikzlibrary{calc}
+\usetikzlibrary{positioning}
+
+\usepackage{amsthm}
+
+\theoremstyle{definition}
+\newtheorem{definition}{Definition}[section]
 
 % Optional math commands from https://github.com/goodfeli/dlbook_notation.
 \input{math_commands.tex}
@@ -69,88 +80,245 @@ Address \\
 \maketitle
 
 \begin{abstract}
-   Trajectory-User Linking (TUL), which aims to associate unlabeled spatial trajectories to the users that generated them is a common task in transportation and mobility applications. Recent approaches have demonstrated impressive performance when trained on large datasets of historical check-in data in a batch-mode setting. However, this mode of evaluation is not representative for many real-world TUL applications, where data is not available from the start, but is instead generated incrementally over time. 
-   - Online Machine Learning is needed, but understudied. 
-   - To bridge this gap, we perform a comprehensive evaluation of the most successful TUL techniques in a streaming setting.
-   - Streaming setting exacerbates sparsity problem of mobility data, since TUL models must adapt to concept drifts with a limited amount of data to be able to yield accurate results.
-   - To mitigate this issue, we propose a novel approach where locations partially share their embeddings with neighboring locations. 
-   - By performing this sharing for multiple neighborhood sizes, we incorporate information with varying levels of specificity and pervasiveness with the goal of enabling fast post-concept drift adaptation while maintaining good performance in phases with stationary data.
+    Trajectory-User Linking (TUL), which aims to associate unlabeled spatial trajectories to a user or entity that generated them is a common task in transportation and mobility applications.
+    Often times, data in such applications is generated as part of a data stream and may be affected by distributional shifts.
+    For this reason, training TUL models \textit{online} by incrementally adapting them to new data can be beneficial in many cases.
+    Nevertheless, online TUL has not been studied by existing research.
+    To bridge this gap, we perform comprehensive online learning evaluations of some the most successful TUL techniques.
+    We further propose a novel embedding approach for online TUL, which we call \underline{M}ult\underline{i}-\underline{L}evel \underline{E}mbedding \underline{S}haring (MiLES).
+    MiLES involves partially sharing embeddings for locations within neighborhoods of multiple size levels, allowing the shared embeddings to receive more frequent updates and therefore enabling faster adaptation to new trajectory data.
+    Our evaluations on multiple real-world datasets show that MiLES significantly improves the performance of existing state-of-the-art TUL approaches in an online learning setting.
 \end{abstract}
 
-\section{Introduction}
+\section{Introduction}\label{sec:intro}
 
-- mobility data has become abundant thanks to the proliferation of devices supporting location services 
-- this has spawned a variety of machine learning tasks, specifically catered to make use of this type of data
-- one such task is Trajectory User Linking (TUL), introduced by \citet{gaoIdentifyingHumanMobility2017}
-- originally TUL was proposed with the specific application in  of linking users of location based social networks to unlabeled trajectories \cite{gaoIdentifyingHumanMobility2017}  
-- TUL has many more practical applications in areas such as ride-hailing, logistics, or law-enforcement make use 
-- Previous works have achieved remarkable results using recurrent neural networks and more recently with transformer-based approaches 
-- These works are limited to conventional batch-learning where all training data is available at once. 
-- In many real-world applications, data is generated continously in the form of data streams. 
-- When establishing a new location-based service i.e. the amount of initial data available for training may be small or zero. 
-- Furthermore, real-world data is often affected by shifts in their distributions in the form of concept drift. 
-- For mobility data, such shifts may occur due to seasonality, openings or closures of points of interest, changes in user activity 
-- Therefore, it can be beneficial to 
+Thanks to the proliferation of smartphones, wearables and other devices supporting location services, mobility data has become abundant, spawning a variety of machine learning tasks in the process \citep{rehmanMiningPersonalData2015,zhengTrajectoryDataMining2015}.
+One such task is Trajectory User Linking (TUL), introduced by \citet{gaoIdentifyingHumanMobility2017}.
+- Trajectory: temporally ordered sequence of so-called check-ins at visited locations or points of interest (POIs)
+- TUL involves linking trajectories, to the users or entities that created them \citep{gaoIdentifyingHumanMobility2017}
+- TUL has practical applications in disease control, law enforcement, ride-sharing, location recommendation and many more \citep{haoUnderstandingUrbanPandemic2020,gaoIdentifyingHumanMobility2017}
+- Previous works on TUL achieved remarkable results using approaches based on recurrent neural networks and, more recently, on transformer architectures.
+- These works are limited to conventional batch-learning where all training data is available at once.
+- However, when establishing a new location-based service for instance, the amount of initial data available for training may be insufficient for achieving optimal results with this approach, due to the fact that in many real-world applications, data is instead generated one sample or chunk at a time in the form of a \textit{data stream}.
+- Furthermore, such data streams are commonly affected by temporal dependencies and shifts in their distributions in the form of concept drift \citep{gomesSurveyEnsembleLearning2017}.
+- For mobility data, distributional shifts notably occurred as a result of the COVID-19 pandemic \citep{borkowskiLockdownedEverydayMobility2021} but may, for example, also occur due to seasonality, new points of interest, or changes in user activity.
+- Therefore, incremental adaptation to new trajectories through the use of \textit{online learning} can be essential in real-world applications of TUL.
 
-\section{Related Work}
+According to \citet{bifetMOAMassiveOnline2010}, an online machine learning model operating in a streaming environment must be able to
+% Remove this? Or does it help understand what online learning means?
+\begin{enumerate}
+    \item[R1:] process a single instance at a time,\label{rq:single_instance}
+    \item[R2:] process each instance in a limited amount of time,\label{rq:limited_time}
+    \item[R3:] use a limited amount of memory,\label{rq:limited_memory}
+    \item[R4:] predict at any time,\label{rq:predict_any_time}
+    \item[R5:] adapt to changes in the data distribution.\label{rq:adapt_to_drift}
+\end{enumerate}
 
-Conventional machine learning approaches 
--longest common subsequence: uses the class of the trajectory with the longest common subsequence as the input trajectory as the prediction
--SVM, logistic regression + bag of words
+% While most existing TUL approaches can easily be adapted to fulfill these requirements by executing a training step every time a new trajectory is received, the requirements to predict at any time (R4) and adapt to changes in the data distribution (R5)
+- In theory, most existing TUL approaches can easily be adapted to fulfill these requirements by executing a training step every time a new trajectory is received
+- Approach for embedding check-ins of existing TUL approaches may negatively impact their ability to predict at any time (R4) and adapt to changes in the data distribution (R5)
+- Most models embed check-ins using a lookup table containing embedding vectors for each individual POI
+- Due to large number of different locations, visits at most individual POIs is generally infrequent \citep{chenMutualDistillationLearning2022a}
+- Only embeddings of visited POIs have non-zero gradient
+- Not a big issue in batch-learning, due to training on dataset collected over a long timespan
+- Causes embeddings to adapt slowly in online TUL
+- Sharing embeddings between multiple locations causes them to have significantly lower gradient sparsity
+- Intuitively knowledge about locations is shared enabling the network to interpret ones with that received few check-ins
+- Sharing embeddings based on spatial proximity/neighborhoods *makes sense*
+- POI's withing the same neighborhood often share similar characteristics, like function (i.e. working, living, recreation) or affluence
+- Using proximity as an inductive bias also requires no additional information
+- Embedding gradients get less sparse with increasing neighborhood size
+- However, there is a trade-off between density and specificity as embeddings also become less specific with increasing neighborhood-size
+- Therefore, sharing between large neighborhoods may be helpful at the start of training and after concept drifts but inhibits the models capability to accurately interpret precise locations
+- For this reason, we propose multi-level embedding sharing (MiLES), which pools different parts of the embeddings at different levels of neighborhood sizes
+- MiLES divides embeddings into multiple segments, where each segment is shared between neighborhoods of varying sizes to enable a spectrum of features with varying specificity and adaptation speed
+- Different segments may be prioritized based on whether density/adaptation speed or feature specificity is more important at the respective stage of the online learning process
 
-RNN-based approaches
-- TULER: lookup embeddings + LSTM/GRU
-- TULVAE: combines Variational Autoencoder with LSTM classifier that is additionally trained to minimize the expected reconstruction error when appending its predictions to the latent embeddings of the AE
-- DeepTUL: adds a historical attention module to TULER that generates an additional context vector by embedding historical check-ins present in the trajectory to be classified
-
-Transformer-based approaches
-- T3S: uses a transformer that encodes the sequence of visited grid cells which is concatenated with an LSTM embedding of the coordinate sequence
-- TULHOR: uses a modified BERT model that is first pre-trained on sequences of check-ins and grid cells in between each check-in and subsequently finetuned for TUL
-- MainTUL: makes use of an RNN and a transformer encoder, which receive the input trajectory and a version of the trajectory augmented with historical data of the same user respectively. The encoders also receive the sequence of POI categories. The transformer outputs are distilled into the RNN.
-
+- To analyse the effectiveness of MiLES, we first perform a broad evaluation of existing (state-of-the-art) TUL techniques in an online learning setting (i)
+- We then repeat the same evaluations with each of the techniques adapted to use our proposed MiLES embedding technique finding significant performance improvements (ii)
+- Lastly, we perform an ablation study for each component of MiLES and conduct an in-depth analysis of its functionality (ii)
 
 
 \section{Preliminaries}
 
-\subsection{Trajectory User Linking}
-\subsection{Online Learning}
+In the following we will introduce the basic concepts underlying online trajectory user linking:
 
-\subsection{Trajectory-User Linking}
+% As previously noted, the fundamental units of information for TUL are so-called check-ins which are defined as follows:
 
-\subsection{Online Machine Learning}
+\begin{definition}[Check-In]
+    A check-in is a tuple $\vc = (u, t, \vl)$ containing a user identifier $u$ from a set of participating users $\sU$, timestamps $t$ and geo-coordinates $\vl$ of the visited location.
+    Check-ins often additionally contain a unique identifier $p\in\sP$, where $\sP$ is a finite set of POI identifiers.
+\end{definition}
+
+\begin{definition}[Trajectory]
+    A trajectory is a chronologically ordered sequence of check-ins $T = [(u, t_0, \vl_0), ..., (u, t_n, \vl_n)]$ generated by a user $u$ within a specific timeframe $\tau$. If the check-ins of a trajectory lack a user label $u$, they are called \textit{unlinked}.
+\end{definition}
+
+\begin{definition}[Trajectory User Linking] %TODO: convert to problem instead of definition
+    The task of trajectory user linking is to learn a function $f$ on a training set of historical trajectories $\sT_{\textrm{train}}$, that links a set of \textit{unlinked} trajectories $\sT_{\textrm{test}} = \{T_0, ..., T_m\}$ to the users $\sU_{\textrm{test}} = \{u_0,...,u_m\}$ that generated them. Formally, the objective of TUL can be described as
+    \begin{equation}
+        \min_{\bm{\theta}} \sum_{i=0}^{m} L(f(T_i; \bm{\theta}, \sT_{\textrm{train}}), u_i), \ T_i \in \sT_{\textrm{test}}, u_i \in \sU_{\textrm{test}},
+    \end{equation}
+    where $L$ is a loss function that quantifies the predictive error and $\bm{\theta}$ are the model parameters to be optimized.
+\end{definition}
+
+% TODO: move this to approach?
+Due to requirements \textbf{R1-R5} the above definition of TUL, where the model is trained and tested on seperate, self-contained is impractical for an online learning setting.
+Instead, online TUL can more accurately be analyzed using the \textit{prequential} or \textit{interleaved test-then-train} evaluation scheme \citep{bifetMOAMassiveOnline2010}, where each new sample is first used to validate and then to train the underlying model.
+According to this scheme, the optimization goal of online TUL can be formulated as
+\begin{equation} % Notation kinda ugly 
+    \min_{\bm{\theta}_0, ..., \bm{\theta}_{m-1}} \sum_{i=1}^{m-1} L(f(T_{i}; \bm{\theta}_{i-1}, \sT_{\textrm{stream},:i-1}), u_{i}), \ T_i \in \sT_{\textrm{stream}}, u_i \in \sU_{\textrm{stream}},
+\end{equation}
+where $\bm{\theta}_{i-1}$ denotes the model parameters at timestep $i-1$ and $\sT_{\textrm{stream},:i-1}$ is the set of all samples in the data stream up until timestep $i-1$.
+A key difference between the batch-mode and the online learning formulation of TUL is that for the latter, the parameters at each step of the training process contribute equally to the performance of the model, whereas for the former, only the parameters achieved at the very end of the training process are relevant.
+For this reason, the sparsity issue of existing location embedding techniques mentioned in \ref{sec:intro} can have a negative impact in online TUL.
+
+
+\section{Related Work}
+
+While trajectory user linking itself is a relatively recent task, several older approaches from adjacent fields are also suitable for it.
+For instance, using the longest common subsequence algorithm \citep{yingSemanticTrajectoryMining2011} one can predict the user label of an unlinked trajectory based on the trajectory sharing the longest sub-trajectory with the input.
+
+By encoding trajectories solely based on the number of occurrences of each POI, using a bag-of-words approach \citep{mikolovEfficientEstimationWord2013}, conventional classification techniques such as linear discriminant analysis or support vector machines can be used for TUL.
+
+More recent approaches starting with TUL via Embedding and RNN (TULER) \citep{gaoIdentifyingHumanMobility2017}, instead employ an embedding scheme that maintains the order of check-ins by replacing each location in a trajectory with its corresponding real-valued vector stored in an embedding table $Z \in \sR^{|\sP| \times D}$, where $|P|$ is the number of unique locations and $D$ the embedding dimension.
+Combined with recurrent neural networks such as LSTMs \citep{hochreiterLongShort1997} or GRUs \citep{choPropertiesNeuralMachine2014a}, this embedding approach was found to yield significantly better performance compared to the previously described methods \citep{gaoIdentifyingHumanMobility2017}.
+In subsequent works, various extensions of TULER were proposed.
+TULVAE \citep{zhouTrajectoryUserLinkingVariational2018} for instance, combines an LSTM classifier with a variational autoencoder \citep{kingmaAutoEncodingVariationalBayes2013a}, which receives classifications as additional input.
+With this approach, the LSTM classifier is additionally trained to aid the reconstruction of trajectories.
+DeepTUL proposed by \citet{miaoTrajectoryUserLinkingAttentive2020a} instead adds a historical attention module that generates a context vector based on the user IDs of all previous check-ins that share the same locations and time-slots as the input trajectory.
+This context vector is then provided as an additional input to an RNN classifier.
+
+With their advancement in other machine learning disciplines, newer studies on TUL have increasingly focused on transformer-based approaches.
+The T3S model \citep{yangT3SEffectiveRepresentation2021}, for example, combines a transformer- and an LSTM-encoder for encoding trajectories before feeding them to a classification layer.
+Unlike most other TUL approaches, T3S embeds check-ins by mapping them to cells of a square grid and using the respective grid cells as the keys for a lookup table.
+Consequently, locations within the same grid cell share their embeddings and no POI information is removed.
+uses a transformer that encodes the sequence of visited grid cells which is concatenated with an LSTM embedding of the coordinate sequence
+
+In a similar fashion, the purely transformer-based TULHOR \citep{alsaeedTrajectoryUserLinkingUsing2023a} embeds check-ins based on their position within a hexagonal grid.
+The algorithm supplements the grid-based embeddings with conventional POI embeddings as well as with the embeddings of the grid cells visited along the fastest routes between individual check-in locations.
+Seeking to combine the benefits of transformers and RNNs, \citet{chenMutualDistillationLearning2022a} proposed MainTUL, which simultaneously trains one of both types of models on trajectories augmented with previous trajectories of the same user.
+To enhance the models performance, the outputs of the transformer are distilled into the RNN.
+
+Further TUL models include GNNTUL \citep{zhouTrajectoryUserLinkingGraph2021a} and AttnTUL \citep{chenTrajectoryUserLinkingHierarchical2024}, which process trajectories using graph neural networks, as well as the Siamese neural network TULSN \citep{yuTULSNSiameseNetwork2020a}.
+
+
 
 \section{Approach}
 
+- extended check-in definition
+- approach figure
+
+\begin{figure}[h]
+    \centering
+    \resizebox{\textwidth}{!}{
+        \input{./figs/approach.tex}
+    }
+    \caption{Visualization of the proposed multi-level embedding sharing (MiLES) technique.}
+\end{figure}
+
+- approach pseudocode?
+
+- different embedding segments may store information specific to their level of coarseness, i.e. the high level segment may store information specific to the city district while lower level embeddings may store information specific to the
+
 \section{Experiments}
 
-As data sources, we select the commonly used public trajectory datasets Geolife, Foursquare-NYC and Foursquare-TKY which we pre-process according to \citet{chenMutualDistillationLearning2022a} by splitting each trajectory into sub-trajectories with a maximum length of 24 hours for Foursquare-NYC and TKY and 3 hours for Geolife and select the most active users.
-For more information on the selected datasets, refer to Table~\ref{tab:datasets}. 
-We implement all models using PyTorch and tune the learning rate, number of layers and model size for each approach on the first 5000 trajectories of Foursquare-TKY. 
-For approach-specific hyperparameters, we use the authors suggested default values. 
-In terms of data modalities, we use only POIs, coordinates and timestamps. 
-For this reason, we omit the model components in MainTUL and TULHOR that require additional data like POI-categories or mobility flows. 
-To allow the evaluation of MainTUL and DeepTUL, which require historical data as additional inputs, we maintain a buffer of the most recent 1000 trajectories during each run. 
-We use the previously described, unified approach of multi-level lookup-table embeddings that are learned end-to-end. 
+As data sources, we select the commonly used public trajectory datasets GeoLife, Foursquare-NYC and Foursquare-TKY which we pre-process according to \citet{chenMutualDistillationLearning2022a} by splitting each trajectory into sub-trajectories with a maximum length of 24 hours for Foursquare-NYC and TKY and 3 hours for GeoLife and select the most active users.
+For more information on the selected datasets, refer to Table~\ref{tab:datasets}.
+We implement all models using PyTorch and tune the learning rate, number of layers and model size for each approach on the first 5000 trajectories of Foursquare-TKY.
+For approach-specific hyperparameters, we use the authors suggested default values.
+In terms of data modalities, we use only POIs, coordinates and timestamps.
+For this reason, we omit the model components in MainTUL and TULHOR that require additional data like POI-categories or mobility flows.
+To allow the evaluation of MainTUL and DeepTUL, which require historical data as additional inputs, we maintain a buffer of the most recent 1000 trajectories during each run.
+We use the previously described, unified approach of multi-level lookup-table embeddings that are learned end-to-end.
 
 \begin{table}[h]
     \centering
-\caption{Datasets used for experimental evaluation.}
-\label{tab:datasets}
-\begin{tabular}{@{}lrrrrr@{}}
-\toprule
-Dataset        & \# Users & \# Trajectories & \# Check-Ins & \# POIs & Timespan  \\ \midrule
-Foursquare-NYC & 800      & 61,218           & 196,435       & 34,383   & 10 months \\
-Foursquare-TKY & 800      & 70,007           & 324,564       & 38,212   & 10 months \\
-Geolife        & 150      & 25,611           & 1,284,208      & 0       & 64 months \\ \bottomrule
-\end{tabular}
+    \caption{Datasets used for experimental evaluation.}
+    \label{tab:datasets}
+    \begin{tabular}{@{}lrrrrr@{}}
+        \toprule
+        Dataset        & \# Users & \# Trajectories & \# Check-Ins & \# POIs & Timespan  \\ \midrule
+        Foursquare-NYC & 800      & 61,218          & 196,435      & 34,383  & 10 months \\
+        Foursquare-TKY & 800      & 70,007          & 324,564      & 38,212  & 10 months \\
+        GeoLife        & 150      & 25,611          & 1,284,208    & 0       & 64 months \\ \bottomrule
+    \end{tabular}
+\end{table}
+
+- overall results table
+
+\begin{table}[h]
+    \caption{Performance metrics [\%] of TUL models averaged over prequential evaluation runs on different datasets.}
+    \label{tab:models}
+    \begin{tabular}{lccccccccc}
+        \toprule
+        Dataset  & \multicolumn{3}{c}{Foursquare-NYC} & \multicolumn{3}{c}{Foursquare-TKY} & \multicolumn{3}{c}{GeoLife}                                                                                                             \\
+        \cmidrule(lr){2-4} \cmidrule(lr){5-7} \cmidrule(lr){8-10}
+        Model    & Acc@1                              & Acc@5                              & Macro F1                    & Acc@1           & Acc@5           & Macro F1        & Acc@1           & Acc@5           & Macro F1        \\
+        \midrule
+        Bi-TULER & \bfseries 60.12                    & \bfseries 67.20                    & \bfseries 57.83             & \bfseries 61.28 & \bfseries 73.08 & \bfseries 58.96 & \bfseries 37.56 & 70.85           & 26.69           \\
+        TULVAE   & 59.79                              & 66.77                              & 57.32                       & 54.19           & 64.92           & 49.85           & 37.08           & 70.45           & 25.25           \\
+        DeepTUL  & 58.72                              & 65.48                              & 56.60                       & 59.14           & 70.66           & 56.90           & 36.32           & \bfseries 72.64 & \bfseries 29.82 \\
+        MainTUL  & 55.67                              & 62.61                              & 53.01                       & 56.81           & 69.18           & 54.09           & 34.00           & 70.26           & 21.76           \\
+        T3S      & 52.98                              & 60.28                              & 49.50                       & 53.65           & 66.30           & 50.38           & 35.25           & 71.11           & 21.52           \\
+        TULHOR   & 53.85                              & 61.13                              & 50.40                       & 54.39           & 67.24           & 51.06           & 34.65           & 72.46           & 24.92           \\
+        \bottomrule
+    \end{tabular}
+\end{table}
+
+\begin{table}[h]
+    \caption{Change of performance metrics in percentage points when using MiLES over each models' original embedding technique.}
+    \label{tab:miles_improvements}
+    \begin{tabular}{lccccccccc}
+        \toprule
+        Dataset  & \multicolumn{3}{c}{Foursquare-NYC}                    & \multicolumn{3}{c}{Foursquare-TKY}                    & \multicolumn{3}{c}{GeoLife}                                                                                                                                                                                                                                                                                                                                                                           \\
+        \cmidrule(lr){2-4} \cmidrule(lr){5-7} \cmidrule(lr){8-10}
+        Model    & Acc@1                                                 & Acc@5                                                 & Macro F1                                              & Acc@1                                                 & Acc@5                                                 & Macro F1                                              & Acc@1                                                 & Acc@5                                                 & Macro F1                                              \\
+        \midrule
+        Bi-TULER & {\cellcolor[HTML]{E8F59F}} \color[HTML]{000000} +1.49 & {\cellcolor[HTML]{BFE47A}} \color[HTML]{000000} +3.58 & {\cellcolor[HTML]{E3F399}} \color[HTML]{000000} +1.71 & {\cellcolor[HTML]{E8F59F}} \color[HTML]{000000} +1.44 & {\cellcolor[HTML]{CFEB85}} \color[HTML]{000000} +2.87 & {\cellcolor[HTML]{E8F59F}} \color[HTML]{000000} +1.44 & {\cellcolor[HTML]{36A657}} \color[HTML]{000000} +8.72 & {\cellcolor[HTML]{6BBF64}} \color[HTML]{000000} +6.98 & {\cellcolor[HTML]{7FC866}} \color[HTML]{000000} +6.26 \\
+        TULVAE   & {\cellcolor[HTML]{E2F397}} \color[HTML]{000000} +1.79 & {\cellcolor[HTML]{BDE379}} \color[HTML]{000000} +3.73 & {\cellcolor[HTML]{DFF293}} \color[HTML]{000000} +2.04 & {\cellcolor[HTML]{CFEB85}} \color[HTML]{000000} +2.90 & {\cellcolor[HTML]{B1DE71}} \color[HTML]{000000} +4.29 & {\cellcolor[HTML]{C7E77F}} \color[HTML]{000000} +3.22 & {\cellcolor[HTML]{4BB05C}} \color[HTML]{000000} +8.01 & {\cellcolor[HTML]{75C465}} \color[HTML]{000000} +6.57 & {\cellcolor[HTML]{A7D96B}} \color[HTML]{000000} +4.74 \\
+        DeepTUL  & {\cellcolor[HTML]{EEF8A8}} \color[HTML]{000000} +1.06 & {\cellcolor[HTML]{CBE982}} \color[HTML]{000000} +3.04 & {\cellcolor[HTML]{EBF7A3}} \color[HTML]{000000} +1.26 & {\cellcolor[HTML]{EFF8AA}} \color[HTML]{000000} +0.94 & {\cellcolor[HTML]{D9EF8B}} \color[HTML]{000000} +2.44 & {\cellcolor[HTML]{EFF8AA}} \color[HTML]{000000} +0.95 & {\cellcolor[HTML]{39A758}} \color[HTML]{000000} +8.59 & {\cellcolor[HTML]{7DC765}} \color[HTML]{000000} +6.31 & {\cellcolor[HTML]{87CB67}} \color[HTML]{000000} +5.97 \\
+        MainTUL  & {\cellcolor[HTML]{E8F59F}} \color[HTML]{000000} +1.44 & {\cellcolor[HTML]{AFDD70}} \color[HTML]{000000} +4.33 & {\cellcolor[HTML]{E6F59D}} \color[HTML]{000000} +1.52 & {\cellcolor[HTML]{E5F49B}} \color[HTML]{000000} +1.64 & {\cellcolor[HTML]{C1E57B}} \color[HTML]{000000} +3.49 & {\cellcolor[HTML]{E6F59D}} \color[HTML]{000000} +1.56 & {\cellcolor[HTML]{45AD5B}} \color[HTML]{000000} +8.19 & {\cellcolor[HTML]{82C966}} \color[HTML]{000000} +6.18 & {\cellcolor[HTML]{93D168}} \color[HTML]{000000} +5.50 \\
+        T3S      & {\cellcolor[HTML]{E3F399}} \color[HTML]{000000} +1.71 & {\cellcolor[HTML]{C9E881}} \color[HTML]{000000} +3.13 & {\cellcolor[HTML]{DDF191}} \color[HTML]{000000} +2.10 & {\cellcolor[HTML]{E3F399}} \color[HTML]{000000} +1.71 & {\cellcolor[HTML]{CFEB85}} \color[HTML]{000000} +2.84 & {\cellcolor[HTML]{E0F295}} \color[HTML]{000000} +1.90 & {\cellcolor[HTML]{6BBF64}} \color[HTML]{000000} +6.98 & {\cellcolor[HTML]{A5D86A}} \color[HTML]{000000} +4.80 & {\cellcolor[HTML]{9BD469}} \color[HTML]{000000} +5.18 \\
+        TULHOR   & {\cellcolor[HTML]{E3F399}} \color[HTML]{000000} +1.71 & {\cellcolor[HTML]{C9E881}} \color[HTML]{000000} +3.16 & {\cellcolor[HTML]{DDF191}} \color[HTML]{000000} +2.11 & {\cellcolor[HTML]{E2F397}} \color[HTML]{000000} +1.86 & {\cellcolor[HTML]{D1EC86}} \color[HTML]{000000} +2.75 & {\cellcolor[HTML]{DDF191}} \color[HTML]{000000} +2.10 & {\cellcolor[HTML]{45AD5B}} \color[HTML]{000000} +8.20 & {\cellcolor[HTML]{A0D669}} \color[HTML]{000000} +5.03 & {\cellcolor[HTML]{8ECF67}} \color[HTML]{000000} +5.68 \\
+        \bottomrule
+    \end{tabular}
 \end{table}
 
 
+\begin{figure}[h]
+    \centering
+    \includegraphics[width=0.6\textwidth]{figs/ablation_all.pdf}
+    \caption{Results of ablation study.}
+    \label{fig:ablation}
+\end{figure}
+
+\begin{figure}[h]
+    \centering
+    \includegraphics[width=\textwidth]{figs/discretization_rows_BiTULER.pdf}
+    \caption{Performance on Foursquare-NYC relative to number of embedding levels and rows in the base level grid on the performance achieved with MiLES.}
+    \label{fig:discretization}
+\end{figure}
+- embedding level prioritization plot
+
+\begin{figure}[h]
+    \centering
+    \includegraphics{figs/emb_prio.pdf}
+    \caption{Mean weighting factors $w_0, ..., w_3$ and number of unique users within the last 1000 trajectories for evaluation runs on Foursquare-NYC. Shaded areas represent the 1$\sigma$ range.}
+    \label{fig:emb_prio}
+\end{figure}
 
 
 \section{Conclusion}
 
-
+- proposed novel embedding approach for online TUL
+- evaluated efficacy of approach in combination with a variety of TUL models on three real-world datasets
+- found improvements for all combinations of models and datasets
+- improvements in terms of top 5 accuracy were greatest
+- challenging GeoLife dataset benefitted the most
+- embedding technique can be used for any task that takes localization data as input
+- in terms of models, RNN-based ones generally outperformed transformer based approaches
+- likely due to their faster convergence thanks to fewer parameters
 
 \bibliography{collas2025_conference}
 \bibliographystyle{collas2025_conference}

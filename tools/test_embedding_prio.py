@@ -9,7 +9,7 @@ BASEPATH = Path(__file__).parent.parent.joinpath("reports")
 if __name__ == "__main__":
     seeds = [0, 1, 2, 3, 4]
     devices = ["cuda:4", "cuda:5"]
-    path = BASEPATH.joinpath("emb_prio_new.jsonl")
+    path = BASEPATH.joinpath("emb_prio_800.jsonl")
     num_workers = 4
 
     configs = []
@@ -17,12 +17,11 @@ if __name__ == "__main__":
         BiTULER,
     ]:
         for dataset in ["foursquare_NYC"]:
-            n_users = 75 if dataset == "geolife" else 400
             discretization_rows = 800 if dataset == "geolife" else 200
             configs += get_config_grid(
                 dataset=dataset,
                 model_cls=model,
-                n_users=n_users,
+                n_users=800,
                 loc_levels=[4],
                 time_levels=1,
                 optimizer_cls=Adam,

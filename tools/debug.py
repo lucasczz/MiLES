@@ -18,7 +18,7 @@ if __name__ == "__main__":
         loc_level=None,
         time_levels=1,
         optimizer_cls=Adam,
-        embedding_type="lookup_concat",   
+        embedding_type="lookup_weighted_concat",   
         embedding_weight_factor=2,
         discretization_rows=200,
         discretization_shape="hex",

@@ -66,19 +66,27 @@ class EmbeddingWeightTracker:
 
 class JSONTracker:
     def __init__(
-        self, save_path: str, parameters: Dict = {}, write_queue=None, module=None
+        self,
+        save_path: str,
+        parameters: Dict = {},
+        write_queue=None,
+        module=None,
+        emb_log_interval: int = 1,
+        log_emb_norms: bool = False,
     ):
         self.labels, self.preds, self.top_5_tps = [], [], []
+        self.embedding_weights = []
+        self.embedding_norms = []
         self.start = time.time()
         self.parameters = parameters
         self.save_path = BASEPATH.joinpath(save_path)
         self.save_path.parent.mkdir(parents=True, exist_ok=True)
         self.write_queue = write_queue
-        if module is not None:
-            self.emb_tracker = EmbeddingWeightTracker()
-            self.emb_weight_handle, self.emb_norm_handles = (
-                self.emb_tracker.register_hooks(module)
-            )
+        self.module = module
+        self.mod_is_weighted = hasattr(module.embedding, "weights")
+        self.counter = 0
+        self.emb_log_interval = emb_log_interval
+        self.log_emb_norms = log_emb_norms
 
     def update(self, logits, label):
         _logits = logits.numpy(force=True)
@@ -86,6 +94,19 @@ class JSONTracker:
         self.labels.append(_label)
         self.preds.append(_logits.argmax(-1).item())
         self.top_5_tps.append(top_n_tp(_logits, _label))
+        if self.module is not None and self.counter % self.emb_log_interval == 0:
+            if self.mod_is_weighted:
+                self.embedding_weights.append(
+                    self.module.embedding.weights.numpy(force=True)
+                )
+            if self.log_emb_norms:
+                self.embedding_norms.append(
+                    [
+                        torch.norm(level.weight, dim=1).mean().item()
+                        for level in self.module.embedding.loc_embedding
+                    ]
+                )
+        self.counter += 1
 
     def save(self):
         entry = self.parameters | {
@@ -94,16 +115,15 @@ class JSONTracker:
             "top_5_tps": self.top_5_tps,
             "runtime": time.time() - self.start,
         }
-        if self.emb_tracker is not None:
-            if self.emb_weight_handle is not None:
-                emb_weights_t = np.stack(self.emb_tracker.embedding_weights).T
+        if self.module is not None:
+            if self.mod_is_weighted:
+                emb_weights_t = np.stack(self.embedding_weights).T
                 for i, weights in enumerate(emb_weights_t):
                     entry[f"embedding_weight_{i}"] = weights.tolist()
-                self.emb_weight_handle.remove()
-            for i, norms in enumerate(self.emb_tracker.embedding_norms):
-                entry[f"embedding_norm_{i}"] = norms
-            for handle in self.emb_norm_handles:
-                handle.remove()
+            if self.log_emb_norms:
+                norms_t = np.stack(self.embedding_norms).T
+                for i, norms in enumerate(norms_t):
+                    entry[f"embedding_norm_{i}"] = norms.tolist()
 
         if self.write_queue is not None:
             self.write_queue.put(entry)
