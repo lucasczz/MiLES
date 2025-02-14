@@ -5,13 +5,13 @@ from torch.optim import Adam
 
 if __name__ == "__main__":
     batch_size = 1
-    dataset = "foursquare_NYC"
-    n_users = 400
-    subsample = 500
+    dataset = "geolife"
+    n_users = 75
+    subsample = None
     log_path = "debug_emb_tracking.jsonl"
 
     run(
-        dataset="foursquare_TKY",
+        dataset=dataset,
         model_cls=BiTULER,
         n_users=n_users,
         loc_levels=4,

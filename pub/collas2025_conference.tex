@@ -193,7 +193,7 @@ By encoding trajectories solely based on the number of occurrences of each POI, 
 More recent approaches starting with TUL via Embedding and RNN (TULER) \citep{gaoIdentifyingHumanMobility2017}, instead employ an embedding scheme that maintains the order of check-ins by replacing each location in a trajectory with its corresponding real-valued vector stored in an embedding table $Z \in \sR^{|\sP| \times D}$, where $|P|$ is the number of unique locations and $D$ the embedding dimension.
 \citet{gaoIdentifyingHumanMobility2017} introduced three different TULER variants, TULER-G, TULER-L and BiTULER, combining this embedding approach with either a GRU- \citep{choPropertiesNeuralMachine2014a}, an LSTM- or a bidirectional LSTM network \citep{hochreiterLongShort1997}.
 In subsequent works, various extensions of TULER were proposed.
-TULVAE \citep{zhouTrajectoryUserLinkingVariational2018} for instance, combines an LSTM classifier with a variational autoencoder \citep{kingmaAutoEncodingVariationalBayes2013a}, which receives classifications as additional input.
+TULVAE \citep{zhouTrajectoryUserLinkingVariational2018} for instance, combines an LSTM classifier with a variational autoencoder \citep{kingmaAutoEncodingVariationalBayes2022a}, which receives classifications as additional input.
 With this approach, the LSTM classifier is additionally trained to aid the reconstruction of trajectories.
 DeepTUL proposed by \citet{miaoTrajectoryUserLinkingAttentive2020} instead adds a historical attention module that generates a context vector based on the user IDs of all previous check-ins that share the same locations and time-slots as the input trajectory.
 This context vector is then provided as an additional input to an RNN classifier.
@@ -213,7 +213,7 @@ Further TUL models include GNNTUL \citep{zhouTrajectoryUserLinkingGraph2021a} an
 
 
 
-\section{Approach}
+\section{Approach}\label{sec:approach}
 
 As previously described, sharing embeddings between a greater number of locations increases their gradient density but reduces their informational content.
 % Add proof for this? Or is this trivial? 
@@ -235,7 +235,7 @@ However, unlike in TULHOR, we repeat this process multiple times with increasing
     \resizebox{\textwidth}{!}{
         \input{./figs/approach.tex}
     }
-    \caption{Visualization of the proposed multi-level embedding sharing (MiLES) technique.}
+    \caption{Visualization of the proposed multi-level embedding sharing (MiLES) technique with learnable weights $w_l$ and embedding dimensions $d_l$ for each level $l\in \{0,1,2,3\}$ and $\otimes$ representing scalar multiplication. Embedding dimensions are calculated according to Equation~\ref{eq:emb_dims} but are drawn equally sized for visual clarity here.}
     \label{fig:approach}
 \end{figure}
 
@@ -244,7 +244,7 @@ If available, we leverage POI information by setting $h_0$ to the POI index.
 We further initialize an embedding matrix $\mZ_{l}$ of shape $h_l^{\rm{(max)}} \times d_l$ for each level, where $d_l$ is the embedding dimension and $h_l^{\rm{(max)}}$ the maximum POI- or grid cell index.
 To account for the decreasing informational content with increasing levels of aggregation, we assign smaller dimensions to higher-level embeddings.
 We compute the individual embedding dimensions as
-\begin{equation}
+\begin{equation}\label{eq:emb_dims}
     d_l=\frac{d \cdot \alpha^{-l}}{\sum_{l=0}^{l^{\rm{(max)}}} \alpha^{-l}}, \ \alpha > 1
 \end{equation}
 where $d$ is the dimension of the final embedding and $\alpha$ is a hyperparameter.
@@ -259,13 +259,22 @@ where $\mZ_{l,h_l,:}$ is the row vector of $\mZ_l$ located at index $h_l$.
 
 We select concatenation instead of summation to aggregate the level-specific embeddings to avoid interference between levels.
 For a fixed total embedding dimension, this approach also significantly reduces the number of parameters compared to a purely POI-based or summed multi-level embedding, since sharing embeddings between multiple locations decreases the size of the higher level embedding matrices.
+Because MiLES only requires an $O(1)$ table lookup and an $O(d_l)$ multiplication for each of its levels, it is also efficient in terms of computational complexity.
 
 By multiplying the level-specific embeddings $\mZ_{l,h_l,:}$ with learnable parameters $w_l$, we allow the average embedding-norm to be optimized on a per-level basis throughout the online learning process.
 This can be interpreted as an attention mechanism that adapts the model's attention to individual embedding features based on previously observed data.
 With this mechanism, the model can prioritize different embedding features based on the importance of gradient density or informational content for the current state of the data stream.
 
+For a given embedding level $l$, the gradient of the final MiLES embedding $\vg_l$ with respect to the selected embedding vector $\mZ_{h_l, l,:}$ is given by
+$$\frac{\delta \vg_l}{\delta \mZ_{h_l, l,:}} = \frac{\delta w_l * \mZ_{h_l, l,:}}{\delta \mZ_{h_l, l,:}} = w_l.$$
+This means that the learnable weighting $w_l$ not only scales the embeddings but also influences the magnitude of their gradients.
+As a result, it effectively acts as a level-specific learning rate, allowing for adaptive gradient scaling across different embedding levels.
+
+In order not to affect the initial probability distribution of the embedding vectors, we use a starting value of 1 for all $w_l$ in our experiments.
+
 % Remove this?
-Another advantage of MiLES is that due to only adding an $O(1)$ table lookup and a $O(d_l)$ vector multiplication for each embedding level, its computational overhead is minimal.
+Theoretically, the effect of the weighting mechanism described above could also simply be achieved by the learning process adapting the respective weights of the input layer $\theta_l^{(\rm{in})}$ to $w_l\theta_l^{(\rm{in})}$. However, we hypothesize that adding dedicated embedding attention weights can nevertheless be beneficial, since it allows for independent adjustments of the scale and orientation of the individual embeddings.
+% Add pseudo-code?
 
 \section{Experiments}
 
@@ -274,7 +283,8 @@ To evaluate the impact of the proposed MiLES approach and its individual compone
 We conduct our experiments using the popular public trajectory datasets GeoLife, Foursquare-NYC and Foursquare-TKY, which we pre-process according to \citet{chenMutualDistillationLearning2022a} by splitting each trajectory into shorter trajectories with a maximum length of 24 hours for Foursquare-NYC and Foursquare-TKY and 3 hours for GeoLife and select the most active users.
 For more information on the selected datasets, refer to Table~\ref{tab:datasets}.
 
-To adhere to the test-then-train evaluation scheme described in Section~\ref{sec:preliminaries}, we process the datasets one trajectory at a time and use each of them to first evaluate and then to test the TUL model.
+To adhere to the test-then-train evaluation scheme described in Section~\ref{sec:preliminaries}, we process the datasets one trajectory at a time by using each of them to first evaluate and subsequently perform a training step with the respective TUL model.
+For the latter we employ the Adam optimization method \cite{kingmaAdamMethodStochastic2017a}.
 In terms of data modalities, we use GPS coordinates, timestamps and, for the Foursquare datasets, which include such information, POI identifiers.
 We further provide hour-specific lookup embeddings as additional model inputs, as was commonly done in previous work \citep[see e.g.][]{chenMutualDistillationLearning2022a,miaoTrajectoryUserLinkingAttentive2020}.
 For better comparability, we omit any model components that require additional information like the mobility flows used by TULHOR.
@@ -282,32 +292,42 @@ For the evaluation of MainTUL and DeepTUL, which require historical data as inpu
 
 For approach-specific hyperparameters, we use the authors suggested default values and tune other hyperparameters like the learning rate, number of layers and model size on the first 5000 trajectories of Foursquare-TKY.
 We use the same approach to tune the hyperparameters of the proposed embedding technique, which we implement by dividing the map-area containing all check-in locations based on multiple hexagonal grids, with varying numbers of rows.
-By default, we use a total of 3 embedding sharing levels with 200 grid rows for the base level and halve the number of rows for each subsequent embedding level.
+According to the best-performing configuration in our tuning runs, we use a total of 3 embedding sharing levels with 200 grid rows for the base level and halve the number of rows for each subsequent embedding level.
+In case of the GeoLife dataset, which lacks POI information, we use an additional grid-based embedding level with 800 grid-rows to replace the POI embedding level.
 
 Unless stated otherwise, we repeat each of our experiments with 5 different random seeds and report the averages over all runs.
+We implement each of the evaluated TUL approaches using PyTorch \cite{paszkePyTorchImperativeStyle2019a}.
 
-\begin{table}[h]
+\begin{table}[hb]
     \centering
     \caption{Datasets used for experimental evaluation.}
     \label{tab:datasets}
     \begin{tabular}{@{}lrrrrr@{}}
         \toprule
-        Dataset        & \# Users & \# Trajectories & \# Check-Ins & \# POIs & Timespan  \\ \midrule
-        Foursquare-NYC & 800      & 61,218          & 196,435      & 34,383  & 10 months \\
-        Foursquare-TKY & 800      & 70,007          & 324,564      & 38,212  & 10 months \\
-        GeoLife        & 150      & 25,611          & 1,284,208    & 0       & 64 months \\ \bottomrule
+        Dataset                                          & \# Users & \# Trajectories & \# Check-Ins & \# POIs & Timespan  \\ \midrule
+        \multirow{2}{*}{Foursquare-NYC} \footnotemark[1] & 800      & 61,218          & 196,435      & 34,383  & 10 months \\
+                                                         & 400      & 35,510          & 137,886      & 25,443  & 10 months \\ \midrule
+        \multirow{2}{*}{Foursquare-TKY} \footnotemark[1] & 800      & 70,007          & 324,564      & 38,212  & 10 months \\
+                                                         & 400      & 44,955          & 248771       & 28,286  & 10 months \\ \midrule
+        \multirow{2}{*}{GeoLife}  \footnotemark[2]       & 150      & 25,611          & 1,284,208    & 0       & 64 months \\
+                                                         & 75       & 23,290          & 1,187,510    & 0       & 64 months \\ \bottomrule
     \end{tabular}
 \end{table}
 
-In the following, we will describe the the results of our prequential evaluations.
+\footnotetext[1]{Publicly available at \url{https://sites.google.com/site/yangdingqi/home/foursquare-dataset}}
+\footnotetext[2]{Publicly available at \url{https://www.microsoft.com/en-us/download/details.aspx?id=52367}}
 
+In the following, we will describe the results of our prequential evaluations.
 To evaluate their suitability for online learning applications, we ran experiments with a variety of existing TUL approaches and their original location embedding techniques.
-The results of these experiments, depicted in Table~\ref{tab:models}, show that the bidirectional LSTM-based BiTULER achieved the overall best performance, with the only exception being the GeoLife dataset where DeepTUL yielded a higher top-1 accuracy and macro f1 score.
+The results of these experiments for the dataset variants with the higher user counts are depicted in Table~\ref{tab:models}.
+For an overview of the complete results, please refer to Appendix~\ref{sec:full_results}.
+
+As Table~\ref{tab:models} shows, the bidirectional LSTM-based BiTULER achieved the overall best performance, with the only exception being the GeoLife dataset where DeepTUL yielded a higher top-1 accuracy and macro f1 score.
 A likely reason for this is that as the simplest model with the lowest number of parameters allowing for faster adaptation to the distribution of the data stream.
 The same effect may also explain the overall lower performance of the transformer-based MainTUL, T3S and TULHOR models compared to the RNN-based alternatives.
 
-\begin{table}[h]
-    \caption{Top-1 accuracy (Acc@1), top-5 accuracy (Acc@5) and macro F1 score [\%] of TUL models averaged over prequential evaluation runs on different datasets.}
+\begin{table}[hb]
+    \caption{Top-1 accuracy (Acc@1), top-5 accuracy (Acc@5) and macro F1 score [\%] of TUL models averaged over prequential evaluation runs on the Foursquare and Geolife datasets with 800 and 150 users respectively.}
     \label{tab:models}
     \begin{tabular}{lccccccccc}
         \toprule
@@ -325,12 +345,20 @@ The same effect may also explain the overall lower performance of the transforme
     \end{tabular}
 \end{table}
 
-We subsequently repeated our experiments with different TUL approaches, replacing their embedding modules with the propose MiLES technique. 
-Table~\ref{tab:miles_improvements} shows the relative change in performance metrics measured in percentage points achieved with MiLES compared to each models original embedding technique. 
+We subsequently repeated our experiments with different TUL approaches, replacing their original embedding modules with the proposed MiLES technique.
+To disentangle the effect of the embedding dimensionality, we configured MiLES to use the same final embedding dimension of 1024 that we previously used in the evaluation of the original TUL models.
+Table~\ref{tab:miles_improvements} shows the relative change in performance metrics measured in percentage points achieved with this adaptation.
+The results demonstrate that MiLES yielded significant improvements for all datasets in terms of top-1 accuracy, top-5 accuracy and macro F1 score.
+For the Foursquare datasets with 800 users, the improvements are especially large in terms of top-5 accuracy, which may be due to the embeddings with a higher abstraction level disproportionately helping to identify the correct user group.
+The largest improvements can be seen on the GeoLife trajectories, where MiLES increased the top-5 accuracy by up to 6.98 percentage points and the top-1 accuracy by up to 8.72 percentage points, a relative increase of 23.21\%.
+MiLES likely causes larger performance gains for GeoLife due to its lack of POI information.
+Since existing techniques only use single grid-based embedding in place of the more meaningful POI-based embedding \citep{yangT3SEffectiveRepresentation2021} to solve this issue, the additional embedding levels of MiLES may be especially valuable in this case.
+
+The observed improvements are also consistent across all models including T3S and TULHOR, whose original embedding techniques already include a single level grid-based embedding, showing that MiLES' multi-level approach offers significant benefits over existing approaches in an online learning setting.
 
 
-\begin{table}[h]
-    \caption{Change of top-1 accuracy (Acc@1), top-5 accuracy (Acc@5) and macro F1 Score metrics in percentage points when using MiLES over each models' original embedding technique. Larger gains are shown in a darker hue.}
+\begin{table}[ht]
+    \caption{Change of top-1 accuracy (Acc@1), top-5 accuracy (Acc@5) and macro F1 score metrics in percentage points when using MiLES over each models' original embedding technique for the dataset variants with higher user-counts.}
     \label{tab:miles_improvements}
     \begin{tabular}{lccccccccc}
         \toprule
@@ -347,11 +375,22 @@ Table~\ref{tab:miles_improvements} shows the relative change in performance metr
         \bottomrule
     \end{tabular}
 \end{table}
-
+To evaluate the usefulness of the individual components of MiLES, we performed an ablation study, where we removed either individual embedding levels (-L1, -L2, -L3).
+When removing one of the embedding levels, we excluded the affected level in our calculation of the individual embedding dimension (see Equation~\ref{eq:emb_dims}) to eliminate any potential changes introduced by a decrease in the total embedding size compared to the default MiLES configuration.
+We further ablated the weighting of embedding levels through learnable parameters $w$ (-WL) and the level-dependent embedding dimensions (-VD).
+In the case of the latter, we equally split the total embedding size $d$ between the levels instead of using Equation~\ref{eq:emb_dims} to calculate the individual sizes.
+We ran these ablations on all previously described datasets, using BiTULER, which yielded the best performance in our previous evaluations, as the underlying model.
+The results of the ablation study, displayed in Figure~\ref{fig:ablation}, reveal that embedding levels two and three contribute significantly to the average performance of TULER across all datasets.
+Possibly due to a high correlation with the POI-based embeddings, level one provides only a slight increase in terms of macro F1 score compared to the embedding module without it.
+However, since it requires only an additional lookup operation and may yield a larger benefit with a more comprehensive tuning of MiLES' hyperparameters, it is arguably still worthwhile to include embedding level one.
+When removing the weighting of the individual levels (-WL), we find a decrease in all performance metrics, highlighting the effectivity of this adaptation.
+For the model without varying embedding dimensions (-VD), the losses in terms of top-1 accuracy and macro F1 score are even larger, whereas the top-5 accuracy remains unchanged.
+This effect may be caused by the smaller embedding size assigned to the more precise low-level embeddings, which reduces the model's ability to identify the exact user linked to a trajectory.
+% Add PCA visualization of MiLES embeddings?
 \begin{figure}[h]
     \centering
     \includegraphics[width=0.6\textwidth]{figs/ablation_all.pdf}
-    \caption{Results of ablation study.}
+    \caption{Results of ablation study for the proposed embedding technique (MiLES), where we removed either one of the embedding levels (-L1, -L2, -L3), the weighting of embedding levels (-WL) or the varying dimensions of individual embedding levels. BiTULER was used as the classifier. Displayed values are averaged over all datasets.}
     \label{fig:ablation}
 \end{figure}
 
@@ -369,6 +408,20 @@ Table~\ref{tab:miles_improvements} shows the relative change in performance metr
     \label{fig:emb_prio}
 \end{figure}
 
+To enable investigating the dynamics of the learnable level-prioritization weights $w_l$, we recorded their values throughout multiple prequential evaluation runs on the 400 user variant of the Foursquare-NYC dataset.
+Figure~\ref{fig:emb_prio} displays the value of the recorded weights.
+
+On average, all level-specific weights increase throughout the training process.
+Through this mechanism, the effective learning rate of the embedding parameters is increased, as explained in Section~\ref{sec:approach}.
+
+In terms of differences between the individual weights, it can be seen that the weights of the embedding levels with lower gradient sparsity $w_2$ and $w_3$ initially increase slightly faster than the weight of the POI-based embedding $w_0$.
+After 5000 trajectories have been observed, $w_0$ starts exceeding $w_1$ and $w_2$, indicating a benefit of more specific embeddings at this stage of the online learning process.
+Coinciding with a drop
+
+
+
+
+
 
 \section{Conclusion}
 
@@ -385,7 +438,7 @@ Table~\ref{tab:miles_improvements} shows the relative change in performance metr
 \bibliographystyle{collas2025_conference}
 
 \appendix
-\section{Appendix}
-You may include other additional sections here.
+\section{Full Results}\label{sec:full_results}
+
 
 \end{document}
